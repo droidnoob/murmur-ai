@@ -1,0 +1,172 @@
+[project]
+name = "murmur-ai"
+version = "0.0.0"
+description = "A Python multi-agent orchestration runtime. Agents that move as one."
+readme = "README.md"
+authors = [
+    { name = "droidnoob", email = "ak@needletailai.com" }
+]
+license = { text = "TBD" }
+requires-python = ">=3.11"
+keywords = ["agents", "llm", "orchestration", "pydantic-ai", "faststream"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+# Core deps — ThreadBackend works out of the box, no broker required.
+dependencies = [
+    "pydantic==2.13.3",
+    "pydantic-ai==1.87.0",
+    "faststream==0.6.7",
+    "structlog==25.5.0",
+    "pyyaml>=6.0",
+]
+
+# Optional broker support. faststream uses `rabbit` (singular), not `rabbitmq` —
+# we expose `rabbitmq` as the user-facing extra name and map it across.
+[project.optional-dependencies]
+kafka = ["faststream[kafka]==0.6.7"]
+nats = ["faststream[nats]==0.6.7"]
+rabbitmq = ["faststream[rabbit]==0.6.7"]
+redis = ["faststream[redis]==0.6.7"]
+all = [
+    "faststream[kafka]==0.6.7",
+    "faststream[nats]==0.6.7",
+    "faststream[rabbit]==0.6.7",
+    "faststream[redis]==0.6.7",
+]
+# Server / HTTP API. Required by murmur.server.AgentServer.
+server = [
+    "fastapi>=0.115.0,<1.0",
+    "uvicorn>=0.32.0,<1.0",
+    "sse-starlette>=2.1.3,<3.0",
+]
+# Phase 4 — DO NOT install in Phase 1.
+container = ["docker==7.1.0"]
+
+[project.scripts]
+murmur = "murmur.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/droidnoob/murmur-ai"
+Issues = "https://github.com/droidnoob/murmur-ai/issues"
+
+[dependency-groups]
+dev = [
+    "ruff==0.15.12",
+    "ty==0.0.32",
+    "pytest==9.0.3",
+    "pytest-asyncio==1.3.0",
+    "pytest-cov==7.1.0",
+    "hypothesis==6.152.2",
+    "pre-commit==4.6.0",
+    # `httpx` ships with `fastapi`'s test client; pulled in for unit tests.
+    "fastapi>=0.115.0,<1.0",
+    "httpx>=0.27.0,<1.0",
+    "sse-starlette>=2.1.3,<3.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "murmur"
+module-root = "src"
+
+# ---------------------------------------------------------------------------
+# Ruff — lint + format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # bugbear
+    "B9",     # bugbear opinionated
+    "SIM",    # flake8-simplify
+    "C4",     # flake8-comprehensions
+    "PIE",    # flake8-pie
+    "PGH",    # pygrep-hooks
+    "ANN001", # missing type annotation for function argument
+    "ANN201", # missing return type for public function
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ANN001", "ANN201"]
+"src/murmur/__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["murmur"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# ty — type checker
+# ---------------------------------------------------------------------------
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.rules]
+unresolved-import = "error"
+unresolved-attribute = "error"
+invalid-argument-type = "error"
+invalid-return-type = "error"
+invalid-assignment = "error"
+missing-argument = "error"
+too-many-positional-arguments = "error"
+unknown-argument = "error"
+possibly-missing-import = "error"
+unused-ignore-comment = "warn"
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+]
+markers = [
+    "integration: requires external services (broker, docker)",
+]
+
+# ---------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["src/murmur"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
+fail_under = 80
+show_missing = true

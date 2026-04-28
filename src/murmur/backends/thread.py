@@ -1,0 +1,304 @@
+"""ThreadBackend — asyncio-based, in-process execution.
+
+The default backend. Zero configuration, no broker required. Suitable for
+local development and single-host deployments.
+
+Satisfies :class:`murmur.core.protocols.Backend` structurally — required
+surface: ``spawn``, ``status``, ``kill``, ``result``. Adds a backend-native
+``gather`` (Addendum 3) that drives a worker pool over an
+:class:`asyncio.Queue` so per-task failures land in their slot rather than
+collapsing the batch.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import time
+from typing import TYPE_CHECKING, Any
+
+import structlog
+import structlog.contextvars
+from pydantic import BaseModel
+
+from murmur._dispatch import build_pydantic_ai_agent
+from murmur.core.errors import SpawnError
+from murmur.core.protocols.backend import BackendStatus
+from murmur.tools.executor import ToolExecutor
+from murmur.tools.registry import ToolRegistry
+from murmur.types import (
+    AgentContext,
+    AgentHandle,
+    AgentResult,
+    ResultMetadata,
+    TaskSpec,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import pydantic_ai
+
+    from murmur.agent import Agent
+
+
+log: structlog.stdlib.BoundLogger = structlog.get_logger()
+
+
+class ThreadBackend:
+    """Asyncio task-based backend. Default for ``AgentRuntime``."""
+
+    name: str = "thread"
+
+    def __init__(
+        self,
+        *,
+        tool_registry: ToolRegistry | None = None,
+        tool_executor: ToolExecutor | None = None,
+    ) -> None:
+        self._tool_registry: ToolRegistry = tool_registry or ToolRegistry()
+        self._tool_executor: ToolExecutor = tool_executor or ToolExecutor(
+            self._tool_registry
+        )
+        self._tasks: dict[str, asyncio.Task[AgentResult[BaseModel]]] = {}
+        self._killed: set[str] = set()
+
+    async def spawn(
+        self,
+        agent: Agent,
+        task: TaskSpec,
+        context: AgentContext,
+    ) -> AgentHandle:
+        await log.ainfo(
+            "agent_spawned",
+            agent_name=agent.name,
+            task_id=task.id,
+            request_id=task.request_id,
+            backend=self.name,
+            trust_level=agent.trust_level.value,
+        )
+        handle = AgentHandle(agent_name=agent.name, task_id=task.id, backend=self.name)
+        self._tasks[handle.handle_id] = asyncio.create_task(
+            self._execute(agent, task, context, handle),
+            name=f"murmur-thread:{handle.handle_id}",
+        )
+        return handle
+
+    async def status(self, handle: AgentHandle) -> BackendStatus:
+        if handle.handle_id in self._killed:
+            return BackendStatus.KILLED
+        task = self._tasks.get(handle.handle_id)
+        if task is None:
+            raise SpawnError(f"unknown handle {handle.handle_id!r}")
+        if not task.done():
+            return BackendStatus.RUNNING
+        if task.cancelled():
+            return BackendStatus.KILLED
+        if task.exception() is not None:
+            return BackendStatus.FAILED
+        return (
+            BackendStatus.COMPLETED if task.result().is_ok() else BackendStatus.FAILED
+        )
+
+    async def kill(self, handle: AgentHandle) -> None:
+        task = self._tasks.get(handle.handle_id)
+        self._killed.add(handle.handle_id)
+        if task is None or task.done():
+            return
+        task.cancel()
+        # Idempotent — swallow the cancellation; result() owners see KILLED.
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+
+    async def result(self, handle: AgentHandle) -> AgentResult[BaseModel]:
+        task = self._tasks.get(handle.handle_id)
+        if task is None:
+            raise SpawnError(f"unknown handle {handle.handle_id!r}")
+        try:
+            return await task
+        except asyncio.CancelledError:
+            return AgentResult[BaseModel](
+                output=None,
+                error=SpawnError(f"agent {handle.agent_name!r} was killed"),
+                metadata=ResultMetadata(backend=self.name),
+                agent_name=handle.agent_name,
+                task_id=handle.task_id,
+            )
+
+    async def gather(
+        self,
+        agent: Agent,
+        tasks: Sequence[TaskSpec],
+        *,
+        max_concurrency: int = 100,
+    ) -> list[AgentResult[BaseModel]]:
+        """Fan ``agent`` across ``tasks`` using an ``asyncio.Queue`` worker pool.
+
+        Each task gets its own context prep via ``agent.context_passer``
+        (matching :meth:`AgentRuntime.run` semantics). Per-task failures land
+        in their slot's :attr:`AgentResult.error` — this method never raises
+        on partial-failure batches. Results come back in input order.
+        """
+        if not tasks:
+            return []
+        queue: asyncio.Queue[tuple[int, TaskSpec]] = asyncio.Queue()
+        for index, task in enumerate(tasks):
+            queue.put_nowait((index, task))
+
+        results: dict[int, AgentResult[BaseModel]] = {}
+
+        async def worker() -> None:
+            while True:
+                try:
+                    index, task = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    ctx = await agent.context_passer.prepare(AgentContext(), task)
+                    handle = await self.spawn(agent, task, ctx)
+                    results[index] = await self.result(handle)
+                except Exception as exc:  # safety net — _execute swallows already
+                    results[index] = AgentResult[BaseModel](
+                        output=None,
+                        error=SpawnError(f"agent {agent.name!r} failed: {exc}"),
+                        metadata=ResultMetadata(backend=self.name),
+                        agent_name=agent.name,
+                        task_id=task.id,
+                    )
+
+        pool_size = min(max(max_concurrency, 1), len(tasks))
+        workers = [asyncio.create_task(worker()) for _ in range(pool_size)]
+        await asyncio.gather(*workers)
+        return [results[i] for i in range(len(tasks))]
+
+    # ------------------------------------------------------------------ helpers
+
+    async def _execute(
+        self,
+        agent: Agent,
+        task: TaskSpec,
+        context: AgentContext,  # noqa: ARG002 — Phase 1 NullContextPasser path; consumed in Phase 3
+        handle: AgentHandle,  # noqa: ARG002 — reserved for richer logging in Phase 2
+    ) -> AgentResult[BaseModel]:
+        start = time.perf_counter()
+        structlog.contextvars.bind_contextvars(
+            request_id=task.request_id,
+            agent_name=agent.name,
+            task_id=task.id,
+            backend=self.name,
+            trust_level=agent.trust_level.value,
+        )
+        try:
+            try:
+                pa_input = _apply_pre_hooks(agent, task)
+                pa_agent = self._build_pa_agent(agent, agent.tools, task.id)
+                pa_result = await pa_agent.run(pa_input)
+                output = _apply_post_hooks(agent, pa_result.output)
+                duration_ms = int((time.perf_counter() - start) * 1000)
+                await log.ainfo(
+                    "agent_completed",
+                    duration_ms=duration_ms,
+                )
+                return AgentResult[BaseModel](
+                    output=output,
+                    metadata=ResultMetadata(
+                        duration_ms=duration_ms,
+                        tokens_used=_extract_tokens(pa_result),
+                        backend=self.name,
+                    ),
+                    agent_name=agent.name,
+                    task_id=task.id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                duration_ms = int((time.perf_counter() - start) * 1000)
+                wrapped: SpawnError = (
+                    exc
+                    if isinstance(exc, SpawnError)
+                    else SpawnError(f"agent {agent.name!r} failed: {exc}")
+                )
+                await log.aerror(
+                    "agent_failed",
+                    duration_ms=duration_ms,
+                    error=str(wrapped),
+                )
+                return AgentResult[BaseModel](
+                    output=None,
+                    error=wrapped,
+                    metadata=ResultMetadata(duration_ms=duration_ms, backend=self.name),
+                    agent_name=agent.name,
+                    task_id=task.id,
+                )
+        finally:
+            structlog.contextvars.unbind_contextvars(
+                "request_id", "agent_name", "task_id", "backend", "trust_level"
+            )
+
+    def _build_pa_agent(
+        self,
+        agent: Agent,
+        allowed: frozenset[str],
+        task_id: str,
+    ) -> pydantic_ai.Agent[None, Any]:
+        return build_pydantic_ai_agent(
+            agent=agent,
+            allowed=allowed,
+            registry=self._tool_registry,
+            executor=self._tool_executor,
+            task_id=task_id,
+        )
+
+
+def _apply_pre_hooks(agent: Agent, task: TaskSpec) -> str:
+    """Run ``agent.pre_process`` over ``task.input``.
+
+    If ``agent.input_type`` is set, the raw string is first parsed into that
+    type before the hooks run; the final result is re-serialised to JSON for
+    PydanticAI's ``run`` (which always wants a string user prompt).
+    """
+    payload: object = task.input
+    if agent.input_type is not None and isinstance(payload, str):
+        payload = agent.input_type.model_validate_json(payload)
+    for hook in agent.pre_process:
+        payload = hook(payload)
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, BaseModel):
+        return payload.model_dump_json()
+    return str(payload)
+
+
+def _apply_post_hooks(agent: Agent, output: BaseModel) -> BaseModel:
+    """Run ``agent.post_process`` over the LLM output.
+
+    Hooks are same-type ``(output_type) -> output_type`` — we trust the user's
+    declaration; deviating from the contract is caught by ``ty`` at the call
+    site, not by Murmur at runtime.
+    """
+    current: BaseModel = output
+    for hook in agent.post_process:
+        current = hook(current)
+    return current
+
+
+def _extract_tokens(pa_result: object) -> int:
+    """Pull the total-token count off a ``pydantic_ai`` run result.
+
+    PydanticAI exposes usage as a ``RunUsage`` with ``input_tokens`` /
+    ``output_tokens``. We sum them; older / future shapes that expose
+    ``total_tokens`` directly also work via ``getattr``.
+    """
+    usage_fn = getattr(pa_result, "usage", None)
+    if usage_fn is None:
+        return 0
+    usage = usage_fn() if callable(usage_fn) else usage_fn
+    total = getattr(usage, "total_tokens", None)
+    if isinstance(total, int):
+        return total
+    inp = int(getattr(usage, "input_tokens", 0) or 0)
+    out = int(getattr(usage, "output_tokens", 0) or 0)
+    return inp + out
+
+
+__all__ = ["ThreadBackend"]
