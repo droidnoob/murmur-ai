@@ -70,6 +70,13 @@ dev = [
     "fastapi>=0.115.0,<1.0",
     "httpx>=0.27.0,<1.0",
     "sse-starlette>=2.1.3,<3.0",
+    # All four broker extras pulled in so tests can use FastStream's
+    # ``TestKafkaBroker`` / ``TestNatsBroker`` / ``TestRabbitBroker`` /
+    # ``TestRedisBroker`` (in-memory, no Docker needed).
+    "faststream[kafka]==0.6.7",
+    "faststream[nats]==0.6.7",
+    "faststream[rabbit]==0.6.7",
+    "faststream[redis]==0.6.7",
 ]
 
 [build-system]
