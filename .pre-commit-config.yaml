@@ -20,3 +20,15 @@ repos:
       - id: check-merge-conflict
       - id: mixed-line-ending
         args: [--fix=lf]
+
+  # ``ty`` runs on the whole project (per ``[tool.ty.src]`` in pyproject.toml),
+  # not file-by-file — pass_filenames: false. Uses the dev-pinned version
+  # (``ty==0.0.32``) via ``uv run`` so pre-commit and CI agree.
+  - repo: local
+    hooks:
+      - id: ty
+        name: ty check
+        entry: uv run ty check
+        language: system
+        types: [python]
+        pass_filenames: false

@@ -19,7 +19,6 @@ import argparse
 import math
 import random
 
-
 # Sparse → dense character ramp. ``v`` reads as a tiny bird in profile in the
 # mid-densities, which sells the "starling" feel inside the silhouette.
 CHARS = " .·'\",:vV"
@@ -39,9 +38,7 @@ def density(x: float, y: float) -> float:
     head = math.exp(-(((x - 0.36) / 0.11) ** 2) - (((y - 0.00) / 0.085) ** 2))
 
     # ---- beak: small forward extension ----
-    beak = 0.55 * math.exp(
-        -(((x - 0.50) / 0.045) ** 2) - (((y - 0.00) / 0.030) ** 2)
-    )
+    beak = 0.55 * math.exp(-(((x - 0.50) / 0.045) ** 2) - (((y - 0.00) / 0.030) ** 2))
 
     # ---- wings: sample along a swept-back arc on each side ----
     # Sweep increases with t: wing tip is up-and-back from the shoulder.
