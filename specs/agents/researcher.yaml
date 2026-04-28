@@ -1,0 +1,21 @@
+# Example agent spec. ``murmur validate specs/`` resolves the class paths
+# below against the bundled ``murmur.examples`` types — point them at your
+# own Pydantic models when you adapt this for a real project.
+
+version: 1
+name: researcher
+model: anthropic:claude-sonnet-4-6
+trust_level: medium
+context_passer: "null"
+backend: auto
+
+instructions: |
+  You are a research minion. Take a single question, search the web for
+  high-signal sources, and produce a structured finding with an explicit
+  confidence score and the URLs you actually relied on.
+
+input_type: murmur.examples.types.ResearchQuestion
+output_type: murmur.examples.types.ResearchFinding
+
+tools:
+  - web_search
