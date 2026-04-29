@@ -20,11 +20,12 @@ import json
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Protocol, Self
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from murmur._sync import reject_if_in_event_loop
 from murmur.core.errors import MurmurError, RegistryError
 from murmur.runs import RunEvent, RunStatus
 from murmur.server.errors import ErrorResponse, response_to_error
@@ -60,8 +61,11 @@ class MurmurClient:
         *,
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        sync_transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._server_url = server_url.rstrip("/")
+        self._timeout = timeout
+        self._sync_transport = sync_transport
         self._http: httpx.AsyncClient = httpx.AsyncClient(
             base_url=self._server_url,
             timeout=timeout,
@@ -164,6 +168,37 @@ class MurmurClient:
         self._raise_for_status(r)
         return _wire_to_agent_result(r.json())
 
+    # ---------------------------------------------------------------- sync entry points
+
+    def run_sync(
+        self,
+        agent_name: str,
+        task: TaskSpec,
+        *,
+        request_id: str | None = None,
+    ) -> AgentResult[BaseModel]:
+        """Blocking variant of :meth:`run` for notebook / REPL / script use.
+
+        Opens a one-shot :class:`httpx.Client` for the call — does not
+        share the persistent ``httpx.AsyncClient`` used by the async
+        methods. **Cannot be called from inside a running event loop**
+        (raises :class:`RuntimeError`).
+        """
+        reject_if_in_event_loop("MurmurClient.run_sync")
+        rid = request_id or str(uuid.uuid4())
+        with httpx.Client(
+            base_url=self._server_url,
+            timeout=self._timeout,
+            transport=self._sync_transport,
+        ) as http:
+            r = http.post(
+                f"/agents/{agent_name}/run",
+                json={"task": task.model_dump(), "request_id": rid},
+                headers={_REQUEST_ID_HEADER: rid},
+            )
+            self._raise_for_status(r)
+            return _wire_to_agent_result(r.json())
+
     # ------------------------------------------------------------------ async dispatch
 
     async def submit(
@@ -243,10 +278,27 @@ class MurmurClient:
         raise RegistryError(f"server returned {response.status_code}: {detail!r}")
 
 
-class Run:
-    """Handle for an asynchronously-dispatched server-side run."""
+class _RunBackend(Protocol):
+    """Internal hooks ``Run`` calls. Both :class:`MurmurClient` (HTTP) and
+    :class:`murmur_client.LocalClient` (in-process) satisfy this Protocol —
+    structural, no inheritance — so a single :class:`Run` handle works for
+    either transport."""
 
-    def __init__(self, *, client: MurmurClient, run_id: str, target: str) -> None:
+    async def _status(self, run_id: str) -> RunStatus: ...
+    async def _result(self, run_id: str) -> AgentResult[BaseModel]: ...
+    async def _cancel(self, run_id: str) -> None: ...
+    def _stream(self, run_id: str) -> AsyncIterator[RunEvent]: ...
+
+
+class Run:
+    """Handle for an asynchronously-dispatched run.
+
+    Backed by either :class:`MurmurClient` (HTTP) or
+    :class:`murmur_client.LocalClient` (in-process); the four ``_status`` /
+    ``_result`` / ``_cancel`` / ``_stream`` hooks satisfy a shared Protocol.
+    """
+
+    def __init__(self, *, client: _RunBackend, run_id: str, target: str) -> None:
         self._client = client
         self._run_id = run_id
         self._target = target
@@ -303,8 +355,8 @@ def _wire_to_agent_result(body: dict[str, Any]) -> AgentResult[BaseModel]:
 class _UntypedOutput(BaseModel):
     """Dict-shaped fallback for client-side outputs.
 
-    Phase 2 may add a discovery-driven typed deserializer (the client
-    fetches the schema and instantiates the correct class). For now the
+    A discovery-driven typed deserializer (the client fetches the schema
+    and instantiates the correct class) is a future option. For now the
     payload is exposed as a plain dict via :attr:`payload`.
     """
 

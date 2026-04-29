@@ -5,9 +5,8 @@ local development and single-host deployments.
 
 Satisfies :class:`murmur.core.protocols.Backend` structurally — required
 surface: ``spawn``, ``status``, ``kill``, ``result``. Adds a backend-native
-``gather`` (Addendum 3) that drives a worker pool over an
-:class:`asyncio.Queue` so per-task failures land in their slot rather than
-collapsing the batch.
+``gather`` that drives a worker pool over an :class:`asyncio.Queue` so
+per-task failures land in their slot rather than collapsing the batch.
 """
 
 from __future__ import annotations
@@ -177,8 +176,8 @@ class ThreadBackend:
         self,
         agent: Agent,
         task: TaskSpec,
-        context: AgentContext,  # noqa: ARG002 — Phase 1 NullContextPasser path; consumed in Phase 3
-        handle: AgentHandle,  # noqa: ARG002 — reserved for richer logging in Phase 2
+        context: AgentContext,  # noqa: ARG002 — passed by the dispatcher; ContextPasser uses it
+        handle: AgentHandle,  # noqa: ARG002 — passed by the dispatcher; reserved for richer logging
     ) -> AgentResult[BaseModel]:
         start = time.perf_counter()
         structlog.contextvars.bind_contextvars(

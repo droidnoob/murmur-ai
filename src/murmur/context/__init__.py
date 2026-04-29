@@ -1,8 +1,6 @@
 """Context passers — concrete implementations of ``core.protocols.ContextPasser``.
 
-Phase 1 ships :class:`FullContextPasser` and :class:`NullContextPasser`.
-``SummaryContextPasser`` and ``SelectiveContextPasser`` arrive in Phase 3.
-
+Currently shipped: :class:`FullContextPasser` and :class:`NullContextPasser`.
 Import the ``ContextPasser`` Protocol from :mod:`murmur.core.protocols`.
 """
 

@@ -1,4 +1,4 @@
-"""Routing concretes. Phase 1 ships :class:`AlwaysSingleRouter` only."""
+"""Routing concretes — currently :class:`AlwaysSingleRouter`."""
 
 from murmur.routing.always_single import AlwaysSingleRouter
 

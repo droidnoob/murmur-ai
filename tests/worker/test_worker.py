@@ -136,3 +136,40 @@ async def test_lifecycle_hooks_fire(
     assert started[0][1] == echo_agent.name
     assert completed[0][1] == echo_agent.name
     assert completed[0][2] >= 0
+
+
+async def test_worker_rebinds_request_id_contextvar_from_task_message(
+    echo_agent: Agent,
+) -> None:
+    """:class:`Worker` re-binds ``request_id`` from the :class:`TaskMessage`
+    before invoking the inner runtime, so every structlog entry emitted
+    server-side carries the same correlation id the publisher attached
+    to the task."""
+    import structlog.contextvars
+
+    captured_request_ids: list[str | None] = []
+
+    def grab_rid(payload: str) -> str:
+        ctx = structlog.contextvars.get_contextvars()
+        captured_request_ids.append(ctx.get("request_id"))
+        return payload
+
+    broker = InMemoryBroker()
+    publisher = AgentRuntime(broker_instance=broker, runtime_id="rt-rid")
+    agent_with_hook = echo_agent.with_(pre_process=(grab_rid,))
+
+    worker = Worker(
+        broker=broker,
+        agents={agent_with_hook.name: agent_with_hook},
+        runtime=_make_worker_runtime(),
+    )
+    await worker.start()
+    try:
+        await publisher.run(
+            agent_with_hook, TaskSpec(input="hi", request_id="req-known-99")
+        )
+    finally:
+        await worker.stop()
+
+    # Worker re-bound the publisher's request_id before dispatching.
+    assert captured_request_ids == ["req-known-99"]

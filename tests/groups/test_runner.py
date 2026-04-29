@@ -326,12 +326,16 @@ async def test_run_group_raises_AllAgentsFailedError_when_all_minions_fail(
         await worker.stop()
 
 
-async def test_run_group_rejects_multiple_terminals(
+async def test_run_group_rejects_unconditional_multi_terminal(
     head_agent: Agent,
     minion_agent: Agent,
     summary_agent: Agent,
 ) -> None:
-    """A topology with two terminals is a valid DAG but rejected at run_group."""
+    """Multi-terminal topology without branch-routing conditions — every
+    terminal fires at runtime, which the runner rejects. Branch routing
+    (#26) resolves this by gating each branch with a mutually-exclusive
+    condition.
+    """
     publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
     try:
         crew = AgentGroup(
@@ -342,7 +346,464 @@ async def test_run_group_rejects_multiple_terminals(
                 summary_agent: Edge.terminal(),
             },
         )
-        with pytest.raises(TopologyError, match="exactly one terminal"):
+        with pytest.raises(TopologyError, match="multiple terminal results"):
+            await publisher.run_group(crew, TaskSpec(input="..."))
+    finally:
+        await worker.stop()
+
+
+# ---------------------------------------------------------------------------
+# Conditional edges + branch routing
+# ---------------------------------------------------------------------------
+
+
+async def test_condition_true_fires_edge(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """``condition`` returning True is equivalent to no condition."""
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+        crew = AgentGroup(
+            name="cond-true",
+            topology={
+                head_agent: Edge(
+                    to=(summary_agent,),
+                    mapper=lambda _: TaskSpec(input="aggregated"),
+                    condition=lambda _: True,
+                ),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        assert result.agent_name == summary_agent.name
+    finally:
+        await worker.stop()
+
+
+async def test_branch_routing_one_of_two_fires(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Two outgoing edges with mutually-exclusive conditions — only one fires."""
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+        # The head's reasoning field will be "r" (from canned output).
+        # We branch on whether reasoning starts with "r".
+        crew = AgentGroup(
+            name="branch",
+            topology={
+                head_agent: (
+                    Edge(
+                        to=(summary_agent,),
+                        mapper=lambda _: TaskSpec(input="picked-summary"),
+                        condition=lambda out: out.reasoning.startswith("r"),
+                    ),
+                    Edge(
+                        to=(minion_agent,),
+                        mapper=lambda _: TaskSpec(input="picked-minion"),
+                        condition=lambda out: not out.reasoning.startswith("r"),
+                    ),
+                ),
+                summary_agent: Edge.terminal(),
+                minion_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        # Only the summary branch fired.
+        assert result.agent_name == summary_agent.name
+    finally:
+        await worker.stop()
+
+
+async def test_async_condition_is_awaited(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """An async predicate is awaited transparently."""
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+
+        async def is_ok(out):  # noqa: ANN001 — runtime callable
+            import asyncio
+
+            await asyncio.sleep(0)
+            return out.reasoning == "r"
+
+        crew = AgentGroup(
+            name="async-cond",
+            topology={
+                head_agent: Edge(
+                    to=(summary_agent,),
+                    mapper=lambda _: TaskSpec(input="x"),
+                    condition=is_ok,
+                ),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        assert result.agent_name == summary_agent.name
+    finally:
+        await worker.stop()
+
+
+async def test_condition_raise_wrapped_in_topology_error(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+
+        def boom(_out):  # noqa: ANN001
+            raise ValueError("nope")
+
+        crew = AgentGroup(
+            name="raises",
+            topology={
+                head_agent: Edge(
+                    to=(summary_agent,),
+                    mapper=lambda _: TaskSpec(input="x"),
+                    condition=boom,
+                ),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        with pytest.raises(TopologyError, match="research-head.*research-summary"):
+            await publisher.run_group(crew, TaskSpec(input="..."))
+    finally:
+        await worker.stop()
+
+
+async def test_all_branches_skipped_raises(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """If every outgoing edge from the entry returns False, the run produces
+    no terminal result."""
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+        crew = AgentGroup(
+            name="all-false",
+            topology={
+                head_agent: (
+                    Edge(
+                        to=(summary_agent,),
+                        mapper=lambda _: TaskSpec(input="x"),
+                        condition=lambda _: False,
+                    ),
+                    Edge(
+                        to=(minion_agent,),
+                        mapper=lambda _: TaskSpec(input="x"),
+                        condition=lambda _: False,
+                    ),
+                ),
+                summary_agent: Edge.terminal(),
+                minion_agent: Edge.terminal(),
+            },
+        )
+        with pytest.raises(TopologyError, match="produced no terminal result"):
+            await publisher.run_group(crew, TaskSpec(input="..."))
+    finally:
+        await worker.stop()
+
+
+# ---------------------------------------------------------------------------
+# Multi-input aggregation
+# ---------------------------------------------------------------------------
+
+
+def _multi_input_factory(canned: dict[str, Any]) -> Any:
+    """Per-agent canned outputs; raises if an agent isn't in the table."""
+
+    def build(
+        agent: Agent, _allowed: frozenset[str], _task_id: str
+    ) -> pydantic_ai.Agent[None, Any]:
+        out = canned.get(agent.name)
+        if out is None:
+            raise ValueError(f"no canned output for {agent.name!r}")
+        return pydantic_ai.Agent(
+            model=TestModel(custom_output_args=out),
+            instructions=agent.instructions,
+            output_type=agent.output_type,
+        )
+
+    return build
+
+
+@pytest.fixture
+def auditor_agent() -> Agent:
+    return Agent(
+        name="auditor",
+        model="anthropic:claude-sonnet-4-6",
+        instructions="audit",
+        output_type=MinionFinding,  # reuse — same shape as minion
+        trust_level=TrustLevel.SANDBOX,
+        context_passer=NullContextPasser(),
+    )
+
+
+async def _wire_multi(
+    head: Agent,
+    minion: Agent,
+    auditor: Agent,
+    summary: Agent,
+    *,
+    factory: Any,
+) -> tuple[AgentRuntime, Worker]:
+    broker = InMemoryBroker()
+    publisher = AgentRuntime(broker_instance=broker, runtime_id="rt-multi")
+    worker_backend = ThreadBackend()
+    worker_backend._build_pa_agent = factory
+    worker_runtime = AgentRuntime(backend=worker_backend)
+    worker = Worker(
+        broker=broker,
+        agents={
+            head.name: head,
+            minion.name: minion,
+            auditor.name: auditor,
+            summary.name: summary,
+        },
+        runtime=worker_runtime,
+        concurrency=10,
+    )
+    await worker.start()
+    return publisher, worker
+
+
+async def test_multi_input_two_upstreams_converging(
+    head_agent: Agent,
+    minion_agent: Agent,
+    auditor_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Two upstreams converge on a synthesiser via dict-shaped mapper."""
+    factory = _multi_input_factory(
+        {
+            head_agent.name: _decomposition().model_dump(),
+            minion_agent.name: _finding().model_dump(),
+            auditor_agent.name: _finding().model_dump(),
+            summary_agent.name: _final().model_dump(),
+        }
+    )
+    publisher, worker = await _wire_multi(
+        head_agent, minion_agent, auditor_agent, summary_agent, factory=factory
+    )
+
+    seen_keys: dict[str, list[str]] = {}
+
+    def aggregator(inputs):  # noqa: ANN001
+        seen_keys["keys"] = sorted(inputs.keys())
+        return TaskSpec(input="aggregated")
+
+    try:
+        crew = AgentGroup(
+            name="multi-in",
+            topology={
+                head_agent: (
+                    Edge(to=(minion_agent,), mapper=lambda _: TaskSpec(input="m")),
+                    Edge(to=(auditor_agent,), mapper=lambda _: TaskSpec(input="a")),
+                ),
+                minion_agent: Edge(to=(summary_agent,), mapper=aggregator),
+                auditor_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        assert result.agent_name == summary_agent.name
+        assert seen_keys["keys"] == [auditor_agent.name, minion_agent.name]
+    finally:
+        await worker.stop()
+
+
+async def test_multi_input_one_upstream_dead_mapper_sees_empty_list(
+    head_agent: Agent,
+    minion_agent: Agent,
+    auditor_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """If one upstream fully fails, the mapper still runs with [] for that key."""
+
+    def build(
+        agent: Agent, _allowed: frozenset[str], _task_id: str
+    ) -> pydantic_ai.Agent[None, Any]:
+        if agent.name == auditor_agent.name:
+            raise RuntimeError("auditor-down")
+        out = {
+            head_agent.name: _decomposition().model_dump(),
+            minion_agent.name: _finding().model_dump(),
+            summary_agent.name: _final().model_dump(),
+        }[agent.name]
+        return pydantic_ai.Agent(
+            model=TestModel(custom_output_args=out),
+            instructions=agent.instructions,
+            output_type=agent.output_type,
+        )
+
+    publisher, worker = await _wire_multi(
+        head_agent, minion_agent, auditor_agent, summary_agent, factory=build
+    )
+
+    captured: dict[str, Any] = {}
+
+    def aggregator(inputs):  # noqa: ANN001
+        captured["inputs"] = inputs
+        return TaskSpec(input="aggregated")
+
+    try:
+        crew = AgentGroup(
+            name="multi-in-partial",
+            topology={
+                head_agent: (
+                    Edge(to=(minion_agent,), mapper=lambda _: TaskSpec(input="m")),
+                    Edge(to=(auditor_agent,), mapper=lambda _: TaskSpec(input="a")),
+                ),
+                minion_agent: Edge(to=(summary_agent,), mapper=aggregator),
+                auditor_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        # auditor key is present but empty.
+        assert captured["inputs"][auditor_agent.name] == []
+        assert isinstance(captured["inputs"][minion_agent.name], BaseModel)
+    finally:
+        await worker.stop()
+
+
+async def test_multi_input_all_upstreams_dead_raises(
+    head_agent: Agent,
+    minion_agent: Agent,
+    auditor_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """All upstreams dead → AllAgentsFailedError, aggregator never called."""
+
+    def build(
+        agent: Agent, _allowed: frozenset[str], _task_id: str
+    ) -> pydantic_ai.Agent[None, Any]:
+        if agent.name in {minion_agent.name, auditor_agent.name}:
+            raise RuntimeError("dead")
+        out = {
+            head_agent.name: _decomposition().model_dump(),
+            summary_agent.name: _final().model_dump(),
+        }[agent.name]
+        return pydantic_ai.Agent(
+            model=TestModel(custom_output_args=out),
+            instructions=agent.instructions,
+            output_type=agent.output_type,
+        )
+
+    publisher, worker = await _wire_multi(
+        head_agent, minion_agent, auditor_agent, summary_agent, factory=build
+    )
+
+    def aggregator(inputs):  # noqa: ANN001 - never called
+        raise AssertionError("aggregator should not run when all upstreams are dead")
+
+    try:
+        crew = AgentGroup(
+            name="multi-in-all-dead",
+            topology={
+                head_agent: (
+                    Edge(to=(minion_agent,), mapper=lambda _: TaskSpec(input="m")),
+                    Edge(to=(auditor_agent,), mapper=lambda _: TaskSpec(input="a")),
+                ),
+                minion_agent: Edge(to=(summary_agent,), mapper=aggregator),
+                auditor_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        with pytest.raises(AllAgentsFailedError):
+            await publisher.run_group(crew, TaskSpec(input="..."))
+    finally:
+        await worker.stop()
+
+
+async def test_multi_input_no_aggregator_mapper_raises(
+    head_agent: Agent,
+    minion_agent: Agent,
+    auditor_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Multi-input without any mapper on incoming edges is a topology error."""
+    factory = _multi_input_factory(
+        {
+            head_agent.name: _decomposition().model_dump(),
+            minion_agent.name: _finding().model_dump(),
+            auditor_agent.name: _finding().model_dump(),
+            summary_agent.name: _final().model_dump(),
+        }
+    )
+    publisher, worker = await _wire_multi(
+        head_agent, minion_agent, auditor_agent, summary_agent, factory=factory
+    )
+
+    try:
+        crew = AgentGroup(
+            name="multi-in-no-mapper",
+            topology={
+                head_agent: (
+                    Edge(to=(minion_agent,), mapper=lambda _: TaskSpec(input="m")),
+                    Edge(to=(auditor_agent,), mapper=lambda _: TaskSpec(input="a")),
+                ),
+                minion_agent: Edge(to=(summary_agent,)),
+                auditor_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        with pytest.raises(TopologyError, match="aggregating mapper"):
+            await publisher.run_group(crew, TaskSpec(input="..."))
+    finally:
+        await worker.stop()
+
+
+async def test_multi_input_two_aggregator_mappers_raises(
+    head_agent: Agent,
+    minion_agent: Agent,
+    auditor_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Multiple mappers on incoming edges of one node — ambiguity, reject."""
+    factory = _multi_input_factory(
+        {
+            head_agent.name: _decomposition().model_dump(),
+            minion_agent.name: _finding().model_dump(),
+            auditor_agent.name: _finding().model_dump(),
+            summary_agent.name: _final().model_dump(),
+        }
+    )
+    publisher, worker = await _wire_multi(
+        head_agent, minion_agent, auditor_agent, summary_agent, factory=factory
+    )
+
+    try:
+        crew = AgentGroup(
+            name="multi-in-two-mappers",
+            topology={
+                head_agent: (
+                    Edge(to=(minion_agent,), mapper=lambda _: TaskSpec(input="m")),
+                    Edge(to=(auditor_agent,), mapper=lambda _: TaskSpec(input="a")),
+                ),
+                minion_agent: Edge(
+                    to=(summary_agent,), mapper=lambda d: TaskSpec(input="A")
+                ),
+                auditor_agent: Edge(
+                    to=(summary_agent,), mapper=lambda d: TaskSpec(input="B")
+                ),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        with pytest.raises(TopologyError, match="multiple incoming edges with mappers"):
             await publisher.run_group(crew, TaskSpec(input="..."))
     finally:
         await worker.stop()

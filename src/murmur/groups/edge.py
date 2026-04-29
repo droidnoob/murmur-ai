@@ -14,13 +14,25 @@ mapper's return type to decide between a single dispatch
 
 ``max_concurrency`` caps the fan-out width when ``runtime.gather`` is
 called. Defaults to 100.
+
+Conditions gate whether an edge fires at all. The predicate receives
+the upstream's typed output (same shape as ``mapper``) and returns
+``True`` to fire / ``False`` to skip. Predicates may be sync **or**
+async — the runner awaits the result if it's a coroutine.
+
+Recommended pattern for AI-driven routing: model the classifier as a
+real :class:`~murmur.Agent` node with a typed ``output_type`` and use
+plain sync conditions on its output. Hidden LLM calls inside a
+condition lambda are invisible to the runtime's accounting / tracing.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from murmur.agent import Agent
@@ -28,6 +40,9 @@ if TYPE_CHECKING:
 
 EdgeMapper = Callable[..., Any]
 """Return ``TaskSpec`` for single dispatch, ``list[TaskSpec]`` for fan-out."""
+
+EdgeCondition = Callable[[BaseModel], bool | Awaitable[bool]]
+"""``(upstream_output) -> bool``. Async returns are awaited at the call site."""
 
 
 @dataclass(frozen=True)
@@ -43,10 +58,19 @@ class Edge:
     max_concurrency: int = 100
     """Width cap when this edge fans out."""
 
+    condition: EdgeCondition | None = None
+    """Optional predicate over the upstream's typed output.
+
+    ``None`` means "always fire". When set, the runner evaluates the
+    callable with the upstream output (same value the ``mapper`` would
+    receive) and only traverses to ``to`` agents when it returns truthy.
+    Async callables are awaited.
+    """
+
     @staticmethod
     def terminal() -> Edge:
         """Convenience for terminal nodes — ``Edge(to=())``."""
         return Edge(to=())
 
 
-__all__ = ["Edge", "EdgeMapper"]
+__all__ = ["Edge", "EdgeCondition", "EdgeMapper"]

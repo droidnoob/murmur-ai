@@ -84,3 +84,32 @@ async def test_terminal_call_to_next_stage_raises(ctx: PipelineContext) -> None:
     pipe = Pipeline[int]([bad])
     with pytest.raises(RuntimeError, match="terminal stage"):
         await pipe.run(ctx)
+
+
+# ---------------------------------------------------------------------------
+# state freezing
+# ---------------------------------------------------------------------------
+
+
+def test_state_is_read_only_after_construction() -> None:
+    """In-place mutation of ``state`` must fail loudly."""
+    ctx = PipelineContext(task=TaskSpec(input="x"), agent_name="a", state={"k": "v"})
+    with pytest.raises(TypeError):
+        ctx.state["k2"] = "boom"  # ty: ignore[invalid-assignment]  # test point
+
+
+def test_state_round_trips_through_model_copy() -> None:
+    """The supported update path is ``model_copy(update={'state': {...}})``."""
+    ctx = PipelineContext(task=TaskSpec(input="x"), agent_name="a", state={"k": 1})
+    next_ctx = ctx.model_copy(update={"state": {**ctx.state, "k2": 2}})
+    assert next_ctx.state["k"] == 1
+    assert next_ctx.state["k2"] == 2
+    # original is untouched
+    assert "k2" not in ctx.state
+
+
+def test_state_default_is_empty_and_read_only() -> None:
+    ctx = PipelineContext(task=TaskSpec(input="x"), agent_name="a")
+    assert dict(ctx.state) == {}
+    with pytest.raises(TypeError):
+        ctx.state["k"] = "boom"  # ty: ignore[invalid-assignment]  # test point

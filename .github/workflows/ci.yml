@@ -1,0 +1,82 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_CACHE_DIR: .uv-cache
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  lint-type-test:
+    name: lint + type + unit (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.11.7"
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: install Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: sync deps (dev + all brokers + server)
+        run: uv sync --frozen --group dev --extra all --extra server
+
+      - name: ruff lint
+        run: uv run ruff check src tests
+
+      - name: ruff format check
+        run: uv run ruff format --check src tests
+
+      - name: ty type check
+        run: uv run ty check
+
+      - name: pytest (unit)
+        run: uv run pytest -m "not integration" -q
+
+  integration:
+    name: integration (real brokers)
+    runs-on: ubuntu-latest
+    needs: lint-type-test
+    if: |
+      github.event_name == 'workflow_dispatch'
+      || contains(github.event.pull_request.labels.*.name, 'run-integration')
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.11.7"
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: install Python 3.11
+        run: uv python install 3.11
+
+      - name: sync deps
+        run: uv sync --frozen --group dev --extra all --extra server
+
+      - name: pytest (integration)
+        run: uv run pytest -m integration -q

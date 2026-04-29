@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import pydantic_ai
 import pytest
+from murmur_client.client import MurmurClient, Run
 from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
@@ -23,7 +24,6 @@ from murmur.core.errors import RegistryError
 from murmur.runtime import AgentRuntime
 from murmur.server.app import AgentServer
 from murmur.types import TaskSpec, TrustLevel
-from murmur_client.client import MurmurClient, Run
 
 
 class _Echo(BaseModel):
@@ -132,3 +132,40 @@ async def test_submit_run_handle_round_trip(client: MurmurClient) -> None:
 
     result = await run.result()
     assert result.is_ok()
+
+
+# ---------------------------------------------------------------------------
+# Sync entry point
+# ---------------------------------------------------------------------------
+
+
+def test_run_sync_returns_typed_result_with_mock_transport() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/agents/echo/run"
+        return httpx.Response(
+            200,
+            json={
+                "agent_name": "echo",
+                "task_id": "t1",
+                "success": True,
+                "output": {"text": "ok"},
+                "error": None,
+                "metadata": {},
+            },
+        )
+
+    client = MurmurClient("http://test", sync_transport=httpx.MockTransport(handler))
+    result = client.run_sync("echo", TaskSpec(input="hi"))
+    assert result.is_ok()
+    assert result.output is not None
+    assert result.output.model_dump() == {"text": "ok"}
+
+
+async def test_run_sync_rejects_nested_call() -> None:
+    client = MurmurClient(
+        "http://test",
+        sync_transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+    )
+    with pytest.raises(RuntimeError, match="MurmurClient.run_sync"):
+        client.run_sync("echo", TaskSpec(input="hi"))

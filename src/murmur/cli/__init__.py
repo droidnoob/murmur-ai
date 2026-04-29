@@ -1,12 +1,10 @@
 """``murmur`` CLI entry point.
 
-Phase 1 surface:
+Subcommands:
 
 - ``murmur run <script.py>`` — execute a Python script with the runtime in scope
 - ``murmur validate <specs/>`` — validate every YAML spec under a directory
 - ``murmur worker start --agents X --broker URL`` — start a distributed consumer
-
-Anything else (``serve``, ``workflow``, ``status``) is a later phase.
 
 ``main`` is the ``[project.scripts] murmur`` entry point: ``murmur …`` runs
 :func:`main` with the parsed arguments. Tests drive the same function via

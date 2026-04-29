@@ -1,8 +1,8 @@
 """Execution backends — concretes satisfying ``core.protocols.Backend``.
 
-Phase 1 ships :class:`ThreadBackend` (default) and :class:`JobBackend`
-(FastStream-driven, activated by passing a broker URL to ``AgentRuntime``).
-``ProcessBackend`` and ``ContainerBackend`` arrive in later phases.
+Currently shipped: :class:`ThreadBackend` (default, in-process) and
+:class:`JobBackend` (FastStream-driven, activated by passing a broker
+URL to ``AgentRuntime``).
 
 Import the ``Backend`` Protocol from :mod:`murmur.core.protocols`.
 """

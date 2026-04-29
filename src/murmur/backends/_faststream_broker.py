@@ -74,6 +74,23 @@ class FastStreamBroker:
     def url(self) -> str:
         return self._url
 
+    @property
+    def fs_broker(self) -> Any:
+        """The underlying FastStream broker (``KafkaBroker``, ``NatsBroker``,
+        ``RabbitBroker``, or ``RedisBroker``).
+
+        ``None`` until :meth:`start` lazily constructs it (production mode)
+        — call ``await broker.start()`` first if you need it pre-warmed. In
+        injected/test mode (``_fs_broker=`` was passed at construction) this
+        is non-``None`` from the start.
+
+        Exposed so users mounting Murmur via :class:`AgentRouter` can register
+        their own ``@fs_broker.subscriber("user.events")`` handlers next to
+        Murmur's. Treated as a documented re-export of FastStream's broker —
+        consult the FastStream docs for its full surface.
+        """
+        return self._fs_broker
+
     async def start(self) -> None:
         """Connect the FastStream broker. Idempotent.
 

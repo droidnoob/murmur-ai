@@ -188,7 +188,7 @@ async def test_result_unknown_handle_raises(thread_backend: ThreadBackend) -> No
 
 
 # ---------------------------------------------------------------------------
-# Pre/post hook tests (Addendum 2)
+# Pre/post hook tests
 # ---------------------------------------------------------------------------
 
 
@@ -265,7 +265,7 @@ async def test_no_hooks_is_identity(
 
 
 # ---------------------------------------------------------------------------
-# request_id propagation (Addendum 4)
+# request_id propagation
 # ---------------------------------------------------------------------------
 
 
@@ -293,7 +293,7 @@ async def test_request_id_bound_to_structlog_during_run(
 
 
 # ---------------------------------------------------------------------------
-# gather (Addendum 3)
+# gather
 # ---------------------------------------------------------------------------
 
 

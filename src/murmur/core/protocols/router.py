@@ -1,7 +1,7 @@
 """Router Protocol — single-agent vs orchestrator decision.
 
-Phase 1 default is rule-based; an LLM-backed classifier slots in by satisfying
-this same Protocol.
+The default is rule-based; an LLM-backed classifier slots in by
+satisfying this same Protocol.
 """
 
 from __future__ import annotations

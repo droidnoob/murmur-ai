@@ -5,11 +5,10 @@ incoming tasks through an internal ``ThreadBackend``-backed runtime, then
 publishes the result back to the message's ``reply_to``. Lifecycle hooks
 let users plug in observability without subclassing.
 
-Per Addendum 3 §"JobBackend is just a transport for ThreadBackend
-invocations across machines": the worker's runtime is a *local* one — give
-it a broker URL and you get an infinite loop where tasks are republished
-instead of dispatched. The constructor builds a default ``AgentRuntime()``
-(no broker, ThreadBackend) when none is supplied.
+The worker's runtime MUST be a *local* one — give it a broker URL and
+you get an infinite loop where tasks are republished instead of
+dispatched. The constructor builds a default ``AgentRuntime()`` (no
+broker, ThreadBackend) when none is supplied.
 
 Satisfies :class:`murmur.core.protocols.worker.Worker` structurally.
 """

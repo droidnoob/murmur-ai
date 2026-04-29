@@ -1,7 +1,8 @@
 """EventEmitter Protocol — observability sink for runtime events.
 
-Phase 2 ships concrete emitters (log, SSE, …); the Protocol exists in Phase 1
-so the rest of the code can be designed around it.
+Concrete emitters (log, SSE, …) implement this; the Protocol exists so
+the rest of the code can be designed around it without depending on a
+particular sink.
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@ Activated when :class:`murmur.AgentRuntime` is constructed with a broker URL
 never import ``faststream`` directly. The only sanctioned PydanticAI /
 FastStream imports outside this module live in :mod:`murmur.interop`.
 
-Topology (Addendum 3)::
+Topology::
 
     runtime --publish--> murmur.{agent}.tasks ---> Worker
                                                       |
@@ -15,14 +15,14 @@ Topology (Addendum 3)::
                                                       |
               ResultCollector  <----publish---- murmur.results.{runtime_id}
 
-Per Addendum 3 §"JobBackend is just a transport for ThreadBackend
-invocations across machines": this backend never runs the LLM itself; it
-publishes tasks, the Worker consumes them, dispatches via ThreadBackend's
-path locally, and publishes back. Symmetry collapses duplication.
+This backend is a transport for ThreadBackend invocations across
+machines — it never runs the LLM itself. It publishes tasks, the Worker
+consumes them, dispatches via ThreadBackend's path locally, and
+publishes the result back.
 
 Satisfies :class:`murmur.core.protocols.Backend` structurally — required
 surface: ``spawn``, ``status``, ``kill``, ``result``. Adds a backend-native
-``gather`` (Addendum 3) using the :class:`ResultCollector`.
+``gather`` using the :class:`ResultCollector`.
 """
 
 from __future__ import annotations
@@ -84,6 +84,25 @@ class JobBackend:
     @property
     def broker_url(self) -> str | None:
         return self._broker_url
+
+    @property
+    def started(self) -> bool:
+        """``True`` once :meth:`start` has connected the broker.
+
+        Surfaced for readiness probes so callers can distinguish "broker
+        configured but not yet ready" from "no broker configured at all".
+        """
+        return self._started
+
+    @property
+    def broker(self) -> Broker:
+        """The underlying :class:`Broker` instance (in-memory or FastStream).
+
+        Exposed so callers can drill through to the FastStream broker and
+        register their own ``@broker.subscriber`` handlers next to
+        Murmur's.
+        """
+        return self._broker
 
     async def start(self) -> None:
         """Connect the broker and register the reply-topic subscription.

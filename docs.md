@@ -644,7 +644,7 @@ Done in Phase 1 (everything in `from murmur import …` works end-to-end against
 - Pre/post hooks, `request_id` propagation
 - YAML registry with version field, validation, round-trip
 - CLI: `validate`, `run`, `worker start`
-- AgentServer (FastAPI) with all routes from the addendum
+- AgentServer (FastAPI) with all routes
 - MurmurClient with typed error round-trip
 - Graceful shutdown on server and worker
 

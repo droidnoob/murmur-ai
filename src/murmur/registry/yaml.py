@@ -159,8 +159,8 @@ def agent_to_spec(agent: Agent) -> AgentSpecYaml:
     """Render an ``Agent`` back to the YAML wire form (round-trip).
 
     The agent's ``context_passer`` must be one of the YAML-supported
-    concretes (Phase 1: ``NullContextPasser``, ``FullContextPasser``);
-    other types raise :class:`SpecValidationError`.
+    concretes (``NullContextPasser`` / ``FullContextPasser``); other
+    types raise :class:`SpecValidationError`.
     """
     passer_name: str | None = None
     for name, cls in _CONTEXT_PASSERS.items():
@@ -170,7 +170,7 @@ def agent_to_spec(agent: Agent) -> AgentSpecYaml:
     if passer_name is None:
         raise SpecValidationError(
             f"context_passer {type(agent.context_passer).__name__!r} is not "
-            f"YAML-serialisable in Phase 1; supported: {sorted(_CONTEXT_PASSERS)}"
+            f"YAML-serialisable; supported: {sorted(_CONTEXT_PASSERS)}"
         )
     # ``context_passer`` was narrowed by the lookup loop above; ``backend``
     # was validated by AgentSpecYaml when the spec was loaded — agents

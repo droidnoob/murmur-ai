@@ -1,7 +1,7 @@
-"""Default Phase 1 router — every task takes the single-agent path.
+"""Default router — every task takes the single-agent path.
 
-Satisfies :class:`murmur.core.protocols.router.Router` structurally. The
-LLM-backed classifier in later phases drops in via the same Protocol.
+Satisfies :class:`murmur.core.protocols.router.Router` structurally. An
+LLM-backed classifier drops in via the same Protocol.
 """
 
 from __future__ import annotations

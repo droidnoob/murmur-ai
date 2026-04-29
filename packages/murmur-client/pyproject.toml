@@ -1,0 +1,49 @@
+[project]
+name = "murmur-client"
+version = "0.0.0"
+description = "Lightweight HTTP + in-process client for Murmur agent servers."
+readme = "README.md"
+authors = [
+    { name = "droidnoob", email = "ak@needletailai.com" }
+]
+license = { text = "TBD" }
+requires-python = ">=3.11"
+keywords = ["agents", "murmur", "client"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+# ``murmur-client`` reuses Murmur's frozen value types (``AgentResult``,
+# ``TaskSpec``, ``RunStatus``, ``MurmurError`` hierarchy) so error round-trip
+# is type-identical with the server. The full ``murmur-ai`` install pulls in
+# heavier deps (PydanticAI, FastStream); a future ``murmur-types`` extraction
+# could split the value layer out, but that's deferred — see the planning doc.
+dependencies = [
+    "murmur-ai==0.0.0",
+    "httpx>=0.27.0,<1.0",
+    "pydantic==2.13.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/droidnoob/murmur-ai"
+Issues = "https://github.com/droidnoob/murmur-ai/issues"
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "murmur_client"
+module-root = "src"
+
+# ``murmur-ai`` lives in the same workspace — resolve it from there during
+# ``uv sync``, not from PyPI. Mirrors the workspace declaration in the root
+# ``pyproject.toml``.
+[tool.uv.sources]
+murmur-ai = { workspace = true }

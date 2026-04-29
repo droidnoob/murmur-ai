@@ -44,7 +44,7 @@ class AgentSpecYaml(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     version: Literal[1]
-    """Schema version. Must be ``1`` for Phase 1 specs."""
+    """Schema version. Must be ``1`` — future migrations bump this."""
 
     name: str
     model: str

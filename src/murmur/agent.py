@@ -10,8 +10,8 @@ on :class:`murmur.AgentRuntime` so the agent stays broker-safe and trivially
 serializable. Tools are registered on the runtime's :class:`ToolRegistry`,
 not on the agent.
 
-Pre/post hooks (Addendum 2) are same-type, sync, pure transformations. They
-run *inside* the agent's run boundary — pre-hooks before the LLM call,
+Pre/post hooks are same-type, sync, pure transformations. They run
+*inside* the agent's run boundary — pre-hooks before the LLM call,
 post-hooks after. ``ty`` enforces the signature alignment when the user
 declares the hooks against a typed ``input_type`` / ``output_type``.
 """

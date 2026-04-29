@@ -5,8 +5,7 @@ intercepts, applies trust-level policy, executes via :class:`ToolRegistry`,
 logs, and returns the result.
 
 Concrete satisfying :class:`murmur.core.protocols.tools.ToolExecutor`
-structurally. Phase 1 stub — wired into :class:`murmur.AgentRuntime` once
-the agent dispatch loop lands.
+structurally. Wired into :class:`murmur.AgentRuntime` at dispatch time.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Wire-format errors and HTTP status mapping (Addendum 4).
+"""Wire-format errors and HTTP status mapping.
 
 The server's exception handler converts any :class:`MurmurError` (or
 unhandled exception) into an :class:`ErrorResponse` with a deterministic

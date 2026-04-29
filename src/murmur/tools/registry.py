@@ -1,4 +1,4 @@
-"""Tool registry + Phase 1 ``StaticToolProvider``.
+"""Tool registry + the default ``StaticToolProvider``.
 
 The :class:`StaticToolProvider` here satisfies
 :class:`murmur.core.protocols.tools.ToolProvider` structurally. The Protocol
@@ -19,7 +19,7 @@ ToolFunc = Callable[..., Awaitable[object]]
 
 
 class StaticToolProvider:
-    """Fixed allow-list. The Phase 1 default."""
+    """Fixed allow-list ``ToolProvider``."""
 
     def __init__(self, allowed: frozenset[str]) -> None:
         self._allowed = allowed

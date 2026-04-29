@@ -280,7 +280,7 @@ async def test_unknown_agent_run_returns_404_with_typed_error(
 
 
 # ---------------------------------------------------------------------------
-# Graceful shutdown (Addendum 4)
+# Graceful shutdown
 # ---------------------------------------------------------------------------
 
 
@@ -297,3 +297,61 @@ async def test_shutting_down_returns_503_with_retry_after(
     assert r.headers.get("Retry-After") == "5"
     body = r.json()
     assert body["error"] == "ServerShuttingDown"
+
+
+# ---------------------------------------------------------------------------
+# /healthz + /readyz split
+# ---------------------------------------------------------------------------
+
+
+async def test_healthz_always_200_even_during_shutdown(
+    server: AgentServer,
+) -> None:
+    """``/healthz`` is liveness — bypasses the shutdown guard."""
+    server._shutting_down = True
+    transport = httpx.ASGITransport(app=server.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/healthz")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}
+
+
+async def test_readyz_503_during_drain(server: AgentServer) -> None:
+    server._shutting_down = True
+    transport = httpx.ASGITransport(app=server.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/readyz")
+    assert r.status_code == 503
+    assert r.headers.get("Retry-After") == "5"
+    assert r.json() == {"status": "shutting_down"}
+
+
+async def test_readyz_200_in_steady_state(server: AgentServer) -> None:
+    transport = httpx.ASGITransport(app=server.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/readyz")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ready"}
+
+
+async def test_health_alias_still_returns_ok(server: AgentServer) -> None:
+    """``/health`` continues to work for backwards compat."""
+    transport = httpx.ASGITransport(app=server.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/health")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}
+
+
+async def test_readyz_503_when_broker_not_started(echo_agent) -> None:
+    """A broker-configured runtime with no traffic yet is not ready."""
+    from murmur.runtime import AgentRuntime as _AR
+
+    runtime = _AR(broker="memory://")
+    server = AgentServer(runtime=runtime)
+    server.register(echo_agent)
+    transport = httpx.ASGITransport(app=server.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/readyz")
+    assert r.status_code == 503
+    assert r.json() == {"status": "broker_not_started"}

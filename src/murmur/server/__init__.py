@@ -12,5 +12,6 @@ Lazy-imported so the rest of ``murmur`` stays installable without the
 
 from murmur.server.app import AgentServer
 from murmur.server.errors import ErrorResponse
+from murmur.server.router import AgentRouter
 
-__all__ = ["AgentServer", "ErrorResponse"]
+__all__ = ["AgentRouter", "AgentServer", "ErrorResponse"]

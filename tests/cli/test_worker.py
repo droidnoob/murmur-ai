@@ -170,6 +170,7 @@ async def test_worker_starts_then_shuts_down_on_sigterm(tmp_path: Path) -> None:
     _write_agent(tmp_path, "researcher")
     args = _argparse.Namespace(
         agents="researcher",
+        all_from=None,
         broker="memory://",
         specs=tmp_path,
         concurrency=4,
@@ -183,3 +184,91 @@ async def test_worker_starts_then_shuts_down_on_sigterm(tmp_path: Path) -> None:
     asyncio.create_task(_trigger_sigterm())
     rc = await _run_worker(args)
     assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# ``--all-from`` registry auto-discovery
+# ---------------------------------------------------------------------------
+
+
+def test_all_from_registers_every_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--all-from`` resolves every agent under the given specs root."""
+    import argparse as _argparse
+
+    _write_agent(tmp_path, "alpha")
+    _write_agent(tmp_path, "beta")
+
+    args = _argparse.Namespace(
+        agents=None,
+        all_from=tmp_path,
+        broker="memory://",
+        specs=tmp_path,
+        concurrency=2,
+        prefetch=1,
+    )
+
+    async def _trigger_sigterm() -> None:
+        await asyncio.sleep(0.1)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    async def _drive() -> int:
+        asyncio.create_task(_trigger_sigterm())
+        return await _run_worker(args)
+
+    rc = asyncio.run(_drive())
+    assert rc == 0
+
+
+def test_agents_and_all_from_mutually_exclusive(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """argparse rejects passing both flags (exits via ``SystemExit``)."""
+    _write_agent(tmp_path, "researcher")
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "worker",
+                "start",
+                "--agents",
+                "researcher",
+                "--all-from",
+                str(tmp_path),
+                "--broker",
+                "memory://",
+            ]
+        )
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 2
+    assert "not allowed with" in captured.err or "mutually exclusive" in captured.err
+
+
+def test_neither_agents_nor_all_from_exits_two(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["worker", "start", "--broker", "memory://"])
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 2
+    assert "one of the arguments" in captured.err or "required" in captured.err
+
+
+def test_empty_registry_under_all_from_exits_two(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--all-from`` against a directory with no agents errors with a hint."""
+    (tmp_path / "agents").mkdir()
+    rc = main(
+        [
+            "worker",
+            "start",
+            "--all-from",
+            str(tmp_path),
+            "--broker",
+            "memory://",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "no agents found" in captured.err

@@ -6,7 +6,7 @@ inner runtime is always thread-mode (per the worker docstring: a
 broker-mode runtime would re-publish tasks).
 
 Discovery currently goes through ``YamlRegistry`` rooted at ``--specs``
-(default ``./specs``). Phase 3's workflow engine can extend this.
+(default ``./specs``).
 """
 
 from __future__ import annotations
@@ -31,10 +31,20 @@ def register_worker(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     wsub = p.add_subparsers(dest="worker_command", required=True)
 
     start = wsub.add_parser("start", help="Start a worker.")
-    start.add_argument(
+    selection = start.add_mutually_exclusive_group(required=True)
+    selection.add_argument(
         "--agents",
-        required=True,
         help="Comma-separated agent names this worker should consume.",
+    )
+    selection.add_argument(
+        "--all-from",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "Discover every agent under the given specs root and "
+            "subscribe the worker to all of them. Mutually exclusive "
+            "with --agents."
+        ),
     )
     start.add_argument(
         "--broker",
@@ -58,13 +68,13 @@ def _start(args: argparse.Namespace) -> int:
 
 
 async def _run_worker(args: argparse.Namespace) -> int:
-    names = [n.strip() for n in args.agents.split(",") if n.strip()]
-    if not names:
-        print("[error] --agents is empty", file=sys.stderr)
-        return 2
+    # ``--all-from`` overrides ``--specs`` for the registry root so the user
+    # can subscribe a worker to a directory other than ``./specs`` in one
+    # flag. ``--agents`` keeps the explicit-list behaviour against ``--specs``.
+    specs_root: Path = args.all_from if args.all_from is not None else args.specs
 
     try:
-        registry = YamlRegistry(args.specs)
+        registry = YamlRegistry(specs_root)
     except RegistryError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 2
@@ -74,6 +84,20 @@ async def _run_worker(args: argparse.Namespace) -> int:
         for err in errors:
             print(f"[error] {err}", file=sys.stderr)
         return 1
+
+    if args.all_from is not None:
+        names = sorted(registry.list())
+        if not names:
+            print(
+                f"[error] no agents found under {specs_root}",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        names = [n.strip() for n in args.agents.split(",") if n.strip()]
+        if not names:
+            print("[error] --agents is empty", file=sys.stderr)
+            return 2
 
     try:
         agents = {name: registry.get(name) for name in names}

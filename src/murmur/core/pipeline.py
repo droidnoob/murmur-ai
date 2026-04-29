@@ -12,9 +12,10 @@ threaded through every stage. Stages produce a new ``PipelineContext`` via
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Generic, TypeVar
+from types import MappingProxyType
+from typing import Generic, TypeVar, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from murmur.core.protocols.pipeline import NextStage, Stage
 from murmur.types import AgentContext, AgentHandle, TaskSpec
@@ -25,9 +26,17 @@ T = TypeVar("T")
 class PipelineContext(BaseModel):
     """The carrier object threaded through every stage.
 
-    Frozen — produce a new ``PipelineContext`` via ``model_copy(update=...)``.
-    ``state`` is the only field intended for free-form scratch data; prefer
-    typed fields on this class for anything load-bearing.
+    Frozen — produce a new :class:`PipelineContext` via
+    ``model_copy(update={"state": {...new_state...}})``. ``state`` is for
+    **cross-stage scratch only** — small, ephemeral data shared between
+    stages within a single run. Prefer typed fields on this class for
+    anything load-bearing (``handle``, ``agent_context``, etc.); never put
+    domain values in ``state`` you'd want to grep for later.
+
+    ``state`` is wrapped in a :class:`types.MappingProxyType` post-validation
+    so in-place mutation raises :class:`TypeError` rather than silently
+    corrupting a shared run — the "no in-place mutation, only
+    ``model_copy``" rule is enforceable, not just documented.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -37,6 +46,24 @@ class PipelineContext(BaseModel):
     agent_context: AgentContext = Field(default_factory=AgentContext)
     handle: AgentHandle | None = None
     state: Mapping[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _freeze_state(self) -> PipelineContext:
+        """Replace ``state`` with a :class:`MappingProxyType` view.
+
+        Pydantic v2 normalises the field to a plain ``dict`` during
+        validation; we re-wrap it in a read-only view post-validation so
+        stage code that does ``ctx.state["k"] = v`` raises ``TypeError``.
+        """
+        if not isinstance(self.state, MappingProxyType):
+            backing: dict[str, object] = dict(self.state)
+            # ``frozen=True`` blocks normal attribute assignment; we have
+            # to write through ``object.__setattr__`` here. This is the
+            # one and only place that bypasses the freeze.
+            object.__setattr__(
+                self, "state", cast("Mapping[str, object]", MappingProxyType(backing))
+            )
+        return self
 
 
 class Pipeline(Generic[T]):

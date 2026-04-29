@@ -1,4 +1,4 @@
-"""Long-lived run handles for the submit / poll / stream pattern (Addendum 3).
+"""Long-lived run handles for the submit / poll / stream pattern.
 
 When an :class:`AgentServer` accepts a ``POST /submit`` it returns a
 ``run_id`` immediately and dispatches the actual work in a background task.
@@ -25,6 +25,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from murmur.core.errors import RegistryError
 
 if TYPE_CHECKING:
+    # Type-only imports of the lazy concretes so static checkers see them
+    # statically — at runtime these resolve through ``__getattr__`` below
+    # and don't pull in optional deps unless the user actually uses them.
+    from murmur.runs.redis import RedisRunStore as RedisRunStore
+    from murmur.runs.rocksdb import RocksDBRunStore as RocksDBRunStore
+    from murmur.runs.sqlite import SQLiteRunStore as SQLiteRunStore
     from murmur.types import AgentResult
 
 
@@ -224,12 +230,40 @@ class InMemoryRunStore:
         return self._records[run_id]
 
 
+# ---------------------------------------------------------------------------
+# Lazy concretes — keep optional deps (aiosqlite / rocksdict / redis) out of
+# the import path until they're actually requested. ``import murmur`` keeps
+# working without any of these extras installed.
+# ---------------------------------------------------------------------------
+
+
+_LAZY_CONCRETES = {
+    "SQLiteRunStore": ("murmur.runs.sqlite", "SQLiteRunStore"),
+    "RocksDBRunStore": ("murmur.runs.rocksdb", "RocksDBRunStore"),
+    "RedisRunStore": ("murmur.runs.redis", "RedisRunStore"),
+}
+
+
+def __getattr__(name: str) -> object:
+    target = _LAZY_CONCRETES.get(name)
+    if target is None:
+        raise AttributeError(f"module 'murmur.runs' has no attribute {name!r}")
+    module_name, attr = target
+    import importlib
+
+    module = importlib.import_module(module_name)
+    return getattr(module, attr)
+
+
 __all__ = [
     "InMemoryRunStore",
+    "RedisRunStore",
+    "RocksDBRunStore",
     "RunEvent",
     "RunEventType",
     "RunProgress",
     "RunState",
     "RunStatus",
     "RunStore",
+    "SQLiteRunStore",
 ]

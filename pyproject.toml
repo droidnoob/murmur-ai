@@ -47,7 +47,13 @@ server = [
     "uvicorn>=0.32.0,<1.0",
     "sse-starlette>=2.1.3,<3.0",
 ]
-# Phase 4 — DO NOT install in Phase 1.
+# Persistent RunStore concretes. Installed only when the
+# matching extra is requested; missing deps surface at first use, not on
+# ``import murmur``.
+sqlite = ["aiosqlite>=0.20,<1.0"]
+rocksdb = ["rocksdict>=0.3.29,<1.0"]
+redis-runstore = ["redis>=5"]
+
 container = ["docker==7.1.0"]
 
 [project.scripts]
@@ -59,6 +65,8 @@ Issues = "https://github.com/droidnoob/murmur-ai/issues"
 
 [dependency-groups]
 dev = [
+    # Sibling workspace member — gives tests `from murmur_client import ...`.
+    "murmur-client",
     "ruff==0.15.12",
     "ty==0.0.32",
     "pytest==9.0.3",
@@ -77,6 +85,18 @@ dev = [
     "faststream[nats]==0.6.7",
     "faststream[rabbit]==0.6.7",
     "faststream[redis]==0.6.7",
+    # Real-broker integration tests — gated on Docker availability via
+    # ``@pytest.mark.integration``. Only loaded when ``pytest -m integration``
+    # is invoked; the unit suite never imports them.
+    "testcontainers[nats,rabbitmq,redis]>=4.14,<5",
+    # Persistent RunStore concretes. Pulled into dev so the unit suite
+    # exercises every concrete via ``RunStoreContract``.
+    "aiosqlite>=0.20,<1.0",
+    "rocksdict>=0.3.29,<1.0",
+    "redis>=5",
+    # In-memory Redis with stream + scripting support; lets RedisRunStore's
+    # contract suite run without Docker.
+    "fakeredis[lua]>=2.30,<3",
 ]
 
 [build-system]
@@ -86,6 +106,18 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 module-name = "murmur"
 module-root = "src"
+
+# ---------------------------------------------------------------------------
+# uv workspace — `murmur-ai` (this) + `murmur-client` (packages/murmur-client)
+# both build as separate wheels but share one ``uv.lock``. The dev sync
+# installs both in editable mode so tests against ``murmur_client`` work
+# across the whole monorepo without per-package installs.
+# ---------------------------------------------------------------------------
+[tool.uv.workspace]
+members = ["packages/murmur-client"]
+
+[tool.uv.sources]
+murmur-client = { workspace = true }
 
 # ---------------------------------------------------------------------------
 # Ruff — lint + format

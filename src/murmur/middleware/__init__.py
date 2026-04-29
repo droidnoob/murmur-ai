@@ -1,7 +1,7 @@
 """Pipeline middleware — cross-cutting concerns wrapping stages.
 
-Phase 1 ships :class:`RetryMiddleware`, :class:`TimeoutMiddleware`, and
-:class:`DepthLimitMiddleware`. Cost-tracking and observability arrive in Phase 2.
+Currently shipped: :class:`RetryMiddleware`, :class:`TimeoutMiddleware`,
+and :class:`DepthLimitMiddleware`.
 """
 
 from murmur.middleware.depth_limit import DepthLimitMiddleware

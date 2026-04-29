@@ -1,15 +1,12 @@
 """``AgentServer`` — registers agents, exposes them over HTTP.
 
-Per Addendum 2 §"Client / Server Split" + Addendum 3 §"Server HTTP Endpoints"
-+ Addendum 4 §"Error Serialization" / §"Request ID" / §"Graceful Shutdown".
-
 The server holds:
 
 - a :class:`murmur.AgentRuntime` (configured for either local thread-mode or
   broker-mode, transparently to the user),
 - a registry of agents and (optionally) :class:`murmur.AgentGroup` instances,
 - an :class:`murmur.runs.InMemoryRunStore` for the submit/poll/stream pattern,
-- a FastAPI app exposing the routes listed in Addendum 3.
+- a FastAPI app exposing the HTTP routes.
 
 Synchronous routes (:meth:`runtime.run` / :meth:`runtime.gather`) for short
 tasks; asynchronous ``POST /submit`` for long ones, with status polling and
@@ -29,13 +26,12 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
-import structlog.contextvars
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from murmur.core.errors import MurmurError, RegistryError
+from murmur.core.errors import RegistryError
 from murmur.runs import (
     InMemoryRunStore,
     RunEvent,
@@ -43,7 +39,7 @@ from murmur.runs import (
     RunState,
     RunStatus,
 )
-from murmur.server.errors import ErrorResponse, error_to_response, status_for
+from murmur.server.errors import ErrorResponse
 from murmur.types import AgentResult, TaskSpec
 
 if TYPE_CHECKING:
@@ -157,69 +153,108 @@ class AgentServer:
             setattr(server, "should_exit", True)  # noqa: B010
 
     def _build_app(self) -> FastAPI:
+        # 24c — install the request-id middleware + MurmurError/TimeoutError
+        # exception handlers via the shared :class:`AgentRouter` helper. The
+        # standalone :class:`AgentServer` only adds the server-specific
+        # 503-shutdown-guard middleware on top.
+        from murmur.server.router import AgentRouter
+
         @asynccontextmanager
         async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             yield
             await self._drain()
 
         app = FastAPI(lifespan=_lifespan)
+        app.include_router(self._build_routes())
+        AgentRouter.install_exception_handlers(app)
 
-        # ---------- middleware ----------
-
+        # ---------- shutdown guard (server-only — not on the router) ----------
+        # Order: middleware added LAST runs OUTERMOST in FastAPI. We want
+        # the 503 short-circuit to run before the request-id middleware,
+        # so it must be added after install_exception_handlers above.
         @app.middleware("http")
-        async def _request_id_middleware(
+        async def _shutdown_guard(
             request: Request,
             call_next: Callable[[Request], Any],
         ) -> Any:
-            request_id = request.headers.get(_REQUEST_ID_HEADER) or str(uuid.uuid4())
-            request.state.request_id = request_id
-            structlog.contextvars.bind_contextvars(request_id=request_id)
-            try:
-                if self._shutting_down:
-                    return JSONResponse(
-                        status_code=503,
-                        content=ErrorResponse(
-                            error="ServerShuttingDown",
-                            message="Server is shutting down; retry another instance",
-                            request_id=request_id,
-                        ).model_dump(),
-                        headers={"Retry-After": "5"},
-                    )
-                response = await cast("Any", call_next)(request)
-                response.headers[_REQUEST_ID_HEADER] = request_id
-                return response
-            finally:
-                structlog.contextvars.unbind_contextvars("request_id")
+            # Liveness + readiness probes bypass the shutdown 503 so
+            # orchestrators (k8s, ECS, ...) can still poll them while
+            # the server is draining. ``/readyz`` reports its own 503
+            # when ``_shutting_down`` is set; ``/healthz`` stays 200.
+            if request.url.path in {"/healthz", "/readyz"}:
+                return await cast("Any", call_next)(request)
+            if self._shutting_down:
+                request_id = request.headers.get(_REQUEST_ID_HEADER) or str(
+                    uuid.uuid4()
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content=ErrorResponse(
+                        error="ServerShuttingDown",
+                        message="Server is shutting down; retry another instance",
+                        request_id=request_id,
+                    ).model_dump(),
+                    headers={"Retry-After": "5"},
+                )
+            return await cast("Any", call_next)(request)
 
-        # ---------- exception handlers ----------
+        _ = _shutdown_guard  # decorator does the wiring
+        return app
 
-        @app.exception_handler(MurmurError)
-        async def _murmur_handler(request: Request, exc: MurmurError) -> JSONResponse:
-            request_id = getattr(request.state, "request_id", "")
-            return JSONResponse(
-                status_code=status_for(exc),
-                content=error_to_response(exc, request_id=request_id).model_dump(),
-            )
+    def _build_routes(self) -> APIRouter:
+        """All HTTP routes as an :class:`APIRouter`.
 
-        @app.exception_handler(TimeoutError)
-        async def _timeout_handler(request: Request, exc: TimeoutError) -> JSONResponse:
-            request_id = getattr(request.state, "request_id", "")
-            return JSONResponse(
-                status_code=504,
-                content=error_to_response(exc, request_id=request_id).model_dump(),
-            )
+        Kept separate from :meth:`_build_app` so the router can be mounted
+        into a user-supplied FastAPI app via ``app.include_router(...)``.
+        Middleware and exception handlers stay on :meth:`_build_app`; the
+        public :class:`AgentRouter` wrapper installs equivalent handlers
+        on whatever app the user mounts the router into.
+        """
+        router = APIRouter()
 
         # ---------- discovery ----------
 
-        @app.get("/health")
-        async def health() -> dict[str, str]:
+        @router.get("/healthz")
+        async def healthz() -> dict[str, str]:
+            """Liveness probe — always 200 once the process can serve."""
             return {"status": "ok"}
 
-        @app.get("/agents")
+        @router.get("/readyz")
+        async def readyz() -> JSONResponse:
+            """Readiness probe — 503 during drain or before broker connect.
+
+            Returns 503 when (a) the server has begun graceful shutdown
+            or (b) the runtime's broker is configured but its
+            :meth:`start` hasn't completed. Otherwise 200.
+            """
+            if self._shutting_down:
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "shutting_down"},
+                    headers={"Retry-After": "5"},
+                )
+            backend = self._runtime.backend
+            if backend.__class__.__name__ == "JobBackend" and not getattr(
+                backend, "started", True
+            ):
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "broker_not_started"},
+                    headers={"Retry-After": "1"},
+                )
+            return JSONResponse(status_code=200, content={"status": "ready"})
+
+        @router.get("/health")
+        async def health() -> dict[str, str]:
+            """Backwards-compat alias for ``/healthz``. New deployments
+            should prefer the explicit ``/healthz`` + ``/readyz`` split."""
+            return {"status": "ok"}
+
+        @router.get("/agents")
         async def list_agents() -> list[str]:
             return sorted(self._agents)
 
-        @app.get("/agents/{name}/schema")
+        @router.get("/agents/{name}/schema")
         async def get_agent_schema(name: str) -> dict[str, object]:
             agent = self._require_agent(name)
             return {
@@ -232,23 +267,25 @@ class AgentServer:
                 "output_type": agent.output_type.model_json_schema(),
             }
 
-        @app.get("/groups")
+        @router.get("/groups")
         async def list_groups() -> list[str]:
             return sorted(self._groups)
 
-        @app.get("/groups/{name}/topology")
+        @router.get("/groups/{name}/topology")
         async def get_group_topology(name: str) -> dict[str, object]:
             group = self._require_group(name)
             edges: list[dict[str, object]] = []
-            for src, edge in group.topology.items():
-                for tgt in edge.to:
-                    edges.append(
-                        {
-                            "from": src.name,
-                            "to": tgt.name,
-                            "fan_out": edge.mapper is None,
-                        }
-                    )
+            for src in group.topology:
+                for edge in group.outgoing_edges(src):
+                    for tgt in edge.to:
+                        edges.append(
+                            {
+                                "from": src.name,
+                                "to": tgt.name,
+                                "fan_out": edge.mapper is None,
+                                "conditional": edge.condition is not None,
+                            }
+                        )
             return {
                 "name": group.name,
                 "agents": [a.name for a in group.agents],
@@ -257,7 +294,7 @@ class AgentServer:
 
         # ---------- synchronous dispatch ----------
 
-        @app.post("/agents/{name}/run")
+        @router.post("/agents/{name}/run")
         async def run_agent(
             name: str, body: _RunRequest, request: Request
         ) -> dict[str, object]:
@@ -266,7 +303,7 @@ class AgentServer:
             result = await self._runtime.run(agent, task)
             return _serialize_result(result)
 
-        @app.post("/agents/{name}/gather")
+        @router.post("/agents/{name}/gather")
         async def gather_agent(
             name: str, body: _GatherRequest, request: Request
         ) -> list[dict[str, object]]:
@@ -277,7 +314,7 @@ class AgentServer:
             )
             return [_serialize_result(r) for r in results]
 
-        @app.post("/groups/{name}/run")
+        @router.post("/groups/{name}/run")
         async def run_group(
             name: str, body: _RunRequest, request: Request
         ) -> dict[str, object]:
@@ -288,7 +325,7 @@ class AgentServer:
 
         # ---------- async submit / poll / stream ----------
 
-        @app.post("/submit")
+        @router.post("/submit")
         async def submit(body: _SubmitRequest, request: Request) -> dict[str, str]:
             target = body.target
             if body.is_group:
@@ -301,11 +338,11 @@ class AgentServer:
             asyncio.create_task(self._execute_run(run_id, target, body.is_group, task))
             return {"run_id": run_id}
 
-        @app.get("/runs/{run_id}/status")
+        @router.get("/runs/{run_id}/status")
         async def get_run_status(run_id: str) -> RunStatus:
             return await self._run_store.get_status(run_id)
 
-        @app.get("/runs/{run_id}/result")
+        @router.get("/runs/{run_id}/result")
         async def get_run_result(run_id: str) -> dict[str, object]:
             status = await self._run_store.get_status(run_id)
             if status.state not in {RunState.COMPLETED, RunState.FAILED}:
@@ -318,7 +355,7 @@ class AgentServer:
                 raise RegistryError(f"run_id {run_id!r} has no result")
             return _serialize_result(result)
 
-        @app.get("/runs/{run_id}/stream")
+        @router.get("/runs/{run_id}/stream")
         async def stream_run(run_id: str) -> EventSourceResponse:
             await self._run_store.get_status(run_id)  # 404 early if unknown
 
@@ -328,7 +365,7 @@ class AgentServer:
 
             return EventSourceResponse(_gen())
 
-        @app.post("/runs/{run_id}/cancel")
+        @router.post("/runs/{run_id}/cancel")
         async def cancel_run(run_id: str) -> dict[str, str]:
             status = await self._run_store.get_status(run_id)
             if status.state in {
@@ -343,7 +380,7 @@ class AgentServer:
             )
             return {"state": RunState.CANCELLED.value}
 
-        return app
+        return router
 
     # ------------------------------------------------------------------ helpers
 

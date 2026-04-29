@@ -1,7 +1,7 @@
 """Discover the :data:`FanOut`-annotated field on a Pydantic ``output_type``.
 
 The group runner uses this to figure out which list to split over when an
-edge has no explicit ``mapper``. Validation rules (Phase 3 spec):
+edge has no explicit ``mapper``. Validation rules:
 
 - Exactly one field may carry the marker, or none.
 - The annotated type must be ``list[T]``. Not tuple, not set, not bare ``T``.
