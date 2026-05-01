@@ -42,3 +42,8 @@ htmlcov/
 
 # Local planning notes — not committed
 .planning/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

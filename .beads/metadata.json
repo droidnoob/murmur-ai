@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "murmur_ai",
+  "project_id": "5829de13-1422-4156-bfff-fc3c0db1c551"
+}
