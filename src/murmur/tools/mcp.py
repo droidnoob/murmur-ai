@@ -155,6 +155,7 @@ def mcp_stdio(
     env: Mapping[str, str] | None = None,
     cwd: str | Path | None = None,
     allow: Sequence[str] | None = None,
+    prefix: str | None = None,
 ) -> MCPToolsetProvider:
     """Build an :class:`MCPToolsetProvider` over a stdio MCP server subprocess.
 
@@ -169,7 +170,13 @@ def mcp_stdio(
             default — pass ``dict(os.environ)`` to inherit the parent's.
         cwd: Working directory for the child process.
         allow: Explicit tool allow-list. See
-            :class:`MCPToolsetProvider` for trust-level semantics.
+            :class:`MCPToolsetProvider` for trust-level semantics. Allow-list
+            entries match the *prefixed* tool name when ``prefix`` is set.
+        prefix: Optional namespace prefix prepended to every tool name the
+            server reports — e.g. ``prefix="git_"`` turns ``read_file`` into
+            ``git_read_file``. Lets two MCP servers exposing same-named
+            tools coexist on one agent. Forwarded to PydanticAI's
+            ``MCPServerStdio(tool_prefix=...)``.
     """
     return MCPToolsetProvider(
         MCPServerStdio(
@@ -177,6 +184,7 @@ def mcp_stdio(
             args=list(args),
             env=dict(env) if env is not None else None,
             cwd=cwd,
+            tool_prefix=prefix,
         ),
         allow=allow,
     )
@@ -187,17 +195,22 @@ def mcp_http(
     *,
     headers: Mapping[str, str] | None = None,
     allow: Sequence[str] | None = None,
+    prefix: str | None = None,
 ) -> MCPToolsetProvider:
     """Build an :class:`MCPToolsetProvider` over a Streamable-HTTP MCP server.
 
     Used for newer MCP servers that speak the streamable-HTTP transport.
     Use :func:`mcp_sse` for legacy SSE-only servers. ``allow`` is the
-    optional tool allow-list — see :class:`MCPToolsetProvider`.
+    optional tool allow-list — see :class:`MCPToolsetProvider`. ``prefix``
+    namespaces every reported tool name (forwarded to PydanticAI's
+    ``MCPServerStreamableHTTP(tool_prefix=...)``) so two HTTP MCP servers
+    with overlapping tool names can coexist on one agent.
     """
     return MCPToolsetProvider(
         MCPServerStreamableHTTP(
             url=url,
             headers=dict(headers) if headers is not None else None,
+            tool_prefix=prefix,
         ),
         allow=allow,
     )
@@ -208,15 +221,19 @@ def mcp_sse(
     *,
     headers: Mapping[str, str] | None = None,
     allow: Sequence[str] | None = None,
+    prefix: str | None = None,
 ) -> MCPToolsetProvider:
     """Build an :class:`MCPToolsetProvider` over a Server-Sent-Events MCP server.
 
     ``allow`` is the optional tool allow-list — see :class:`MCPToolsetProvider`.
+    ``prefix`` namespaces every reported tool name (forwarded to
+    ``MCPServerSSE(tool_prefix=...)``).
     """
     return MCPToolsetProvider(
         MCPServerSSE(
             url=url,
             headers=dict(headers) if headers is not None else None,
+            tool_prefix=prefix,
         ),
         allow=allow,
     )

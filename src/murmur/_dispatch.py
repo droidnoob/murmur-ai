@@ -70,12 +70,18 @@ async def build_pydantic_ai_agent(
     pa_model_settings = (
         dict(agent.model_settings) if agent.model_settings is not None else None
     )
+    # ``builtin_tools`` is opt-in (empty default). PydanticAI iterates the
+    # value directly, so empty must be an empty list — not None. We always
+    # forward a fresh list so post-construction mutation of the user's tuple
+    # can't leak into the live PA agent (same shape as ``model_settings``).
+    pa_builtin_tools = list(agent.builtin_tools)
     pa_agent: pydantic_ai.Agent[None, Any] = pydantic_ai.Agent(  # ty: ignore[invalid-assignment]
         model=agent.model,
         instructions=agent.instructions,
         output_type=agent.output_type,
         toolsets=pa_toolsets if pa_toolsets else None,
         model_settings=pa_model_settings,  # ty: ignore[invalid-argument-type]
+        builtin_tools=pa_builtin_tools,
     )
     for name in allowed:
         if name in mcp_tool_names:

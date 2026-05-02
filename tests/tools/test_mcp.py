@@ -173,6 +173,31 @@ def test_mcp_sse_builds_sse_server() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tool prefix (qq6) — collision avoidance across multiple MCP servers
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_stdio_default_prefix_is_none() -> None:
+    provider = mcp_stdio("echo")
+    assert provider._mcp.tool_prefix is None
+
+
+def test_mcp_stdio_forwards_prefix_to_underlying_server() -> None:
+    provider = mcp_stdio("echo", prefix="git_")
+    assert provider._mcp.tool_prefix == "git_"
+
+
+def test_mcp_http_forwards_prefix_to_underlying_server() -> None:
+    provider = mcp_http("http://localhost:7000/mcp", prefix="github_")
+    assert provider._mcp.tool_prefix == "github_"
+
+
+def test_mcp_sse_forwards_prefix_to_underlying_server() -> None:
+    provider = mcp_sse("http://localhost:7001/sse", prefix="legacy_")
+    assert provider._mcp.tool_prefix == "legacy_"
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
 

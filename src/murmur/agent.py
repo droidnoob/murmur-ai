@@ -23,6 +23,16 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# ``AbstractBuiltinTool`` lives in :mod:`pydantic_ai.builtin_tools` and is used
+# as the runtime type for the ``builtin_tools`` field — Pydantic v2 needs the
+# class object resolvable at field-validation time, so this is a real (not
+# TYPE_CHECKING-guarded) import. The Public API Rule (CLAUDE.md §2) bars
+# *user-facing* PydanticAI imports; internal modules like ``agent.py`` are free
+# to depend on PydanticAI directly. The concrete tool classes (WebSearchTool,
+# etc.) are re-exported under :mod:`murmur.tools` so users still don't need to
+# import from PydanticAI to populate this field.
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
+
 from murmur.context.null import NullContextPasser
 from murmur.core.protocols.context import ContextPasser
 from murmur.core.protocols.toolsets import ToolsetProvider
@@ -69,6 +79,35 @@ class Agent(BaseModel):
 
     The runtime owns provider lifecycle — it calls ``start()`` lazily on
     first dispatch and ``stop()`` on shutdown.
+    """
+
+    builtin_tools: tuple[AbstractBuiltinTool, ...] = ()
+    """Provider-side built-in tools — executed by the LLM provider, not Murmur.
+
+    Examples: :class:`pydantic_ai.WebSearchTool`,
+    :class:`pydantic_ai.CodeExecutionTool`,
+    :class:`pydantic_ai.ImageGenerationTool`,
+    :class:`pydantic_ai.WebFetchTool`,
+    :class:`pydantic_ai.FileSearchTool`. Pass instances (with their
+    own configuration knobs — ``max_uses``, ``allowed_domains``, etc.)
+    in this tuple and they're forwarded to
+    ``pydantic_ai.Agent(builtin_tools=...)`` at dispatch.
+
+    For ergonomics, the concrete classes are also re-exported from
+    :mod:`murmur.tools` so users can avoid importing PydanticAI directly:
+
+    >>> from murmur.tools import WebSearchTool
+    >>> Agent(name="r", model="anthropic:claude-sonnet-4-6",
+    ...       builtin_tools=(WebSearchTool(max_uses=5),), ...)
+
+    **CAVEAT** — these run on the provider's infrastructure, so they
+    bypass Murmur's :class:`ToolExecutor`: no trust gate, no allow-list
+    filtering, no per-tool ``TOOL_CALL_*`` lifecycle events (PydanticAI
+    surfaces them post-hoc via ``ModelResponse.builtin_tool_calls``).
+    Token cost still flows through ``CostTrackingMiddleware`` because
+    PydanticAI's ``usage()`` includes provider-side tool tokens. Provider
+    support varies by tool — an unsupported combo raises ``UserError`` at
+    run time, which surfaces as :class:`SpawnError`.
     """
 
     model_settings: Mapping[str, object] | None = None
