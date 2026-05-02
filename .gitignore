@@ -52,3 +52,6 @@ htmlcov/
 # Playwright-cli scratch state — generated per-session, not source
 .playwright/
 .playwright-cli/
+
+# MkDocs build output — published via GitHub Pages workflow, never committed
+site/

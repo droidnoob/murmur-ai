@@ -60,7 +60,15 @@ class Agent(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     name: str
+    """Stable identifier used as the registry key, broker topic suffix, and
+    ``agent_name`` field on every log line and ``RuntimeEvent``."""
+
     model: str
+    """PydanticAI model string. Format is ``"<provider>:<model_name>"``, e.g.
+    ``"anthropic:claude-sonnet-4-6"``, ``"openai:gpt-5.2"``,
+    ``"google:gemini-3-pro-preview"``. Forwarded to PydanticAI verbatim;
+    Murmur does not maintain its own model registry."""
+
     fallback_models: tuple[str, ...] = ()
     """Ordered fallback model names. ``()`` (default) means no fallbacks.
 

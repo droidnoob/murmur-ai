@@ -99,6 +99,16 @@ dev = [
     "fakeredis[lua]>=2.30,<3",
 ]
 
+# Docs build — kept separate so user installs and the dev test suite never
+# pull MkDocs in. Activated only when the docs site is built locally
+# (``uv sync --group docs && uv run mkdocs serve``) or by the docs CI job.
+docs = [
+    "mkdocs-material>=9.6,<10",
+    "mkdocstrings[python]>=0.27,<1",
+    "mkdocs-glightbox>=0.4,<1",
+    "pymdown-extensions>=10.11,<11",
+]
+
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]
 build-backend = "uv_build"
