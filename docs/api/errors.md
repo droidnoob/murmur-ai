@@ -12,6 +12,8 @@ from murmur.core.errors import (
     DepthLimitError,
     MurmurError,
     RegistryError,
+    SpawnCapError,
+    SpawnCycleError,
     SpawnError,
     SpecValidationError,
     ToolExecutionError,
@@ -25,6 +27,8 @@ from murmur.core.errors import (
 ```
 MurmurError
 ├── SpawnError
+├── SpawnCycleError
+├── SpawnCapError
 ├── ToolExecutionError
 ├── ContextError
 ├── BudgetExceededError
@@ -83,6 +87,22 @@ MurmurError
 ### `DepthLimitError`
 
 ::: murmur.core.errors.DepthLimitError
+    options:
+      heading_level: 4
+      show_bases: false
+      members: false
+
+### `SpawnCycleError`
+
+::: murmur.core.errors.SpawnCycleError
+    options:
+      heading_level: 4
+      show_bases: false
+      members: false
+
+### `SpawnCapError`
+
+::: murmur.core.errors.SpawnCapError
     options:
       heading_level: 4
       show_bases: false

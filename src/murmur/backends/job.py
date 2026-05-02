@@ -36,7 +36,13 @@ from pydantic import BaseModel
 from murmur.backends._collector import ResultCollector
 from murmur.core.errors import SpawnError
 from murmur.core.protocols.backend import BackendStatus
-from murmur.messages import ResultMessage, TaskMessage, events_topic, task_topic
+from murmur.messages import (
+    ParentSpawn,
+    ResultMessage,
+    TaskMessage,
+    events_topic,
+    task_topic,
+)
 from murmur.types import (
     AgentContext,
     AgentHandle,
@@ -156,7 +162,7 @@ class JobBackend:
         self,
         agent: Agent,
         task: TaskSpec,
-        context: AgentContext,  # noqa: ARG002 — context-passer runs server-side
+        context: AgentContext,
     ) -> AgentHandle:
         await self.start()
         handle = AgentHandle(agent_name=agent.name, task_id=task.id, backend=self.name)
@@ -171,6 +177,7 @@ class JobBackend:
             request_id=task.request_id,
             task=task,
             events_topic=self._events_topic_for_publish(),
+            parent_spawn=_parent_spawn_from_context(context),
         )
         await log.ainfo(
             "agent_spawned",
@@ -241,6 +248,7 @@ class JobBackend:
         self,
         agent: Agent,
         tasks: Sequence[TaskSpec],
+        context: AgentContext | None = None,
         *,
         max_concurrency: int = 100,  # noqa: ARG002 — broker fan-out is bounded by worker count
     ) -> list[AgentResult[BaseModel]]:
@@ -249,6 +257,10 @@ class JobBackend:
         ``max_concurrency`` is accepted for API parity with the Backend
         Protocol but ignored — broker-side fan-out is bounded by the worker
         fleet's concurrency / prefetch, not the publisher's.
+
+        ``context`` carries the cascading-spawn parent linkage shared across
+        every slot — derived once on the publisher and serialised onto each
+        :class:`TaskMessage`. ``None`` (default) is a top-level batch.
         """
         if not tasks:
             return []
@@ -258,6 +270,9 @@ class JobBackend:
 
         topic = task_topic(agent.name)
         bridge_topic = self._events_topic_for_publish()
+        parent_spawn = (
+            _parent_spawn_from_context(context) if context is not None else None
+        )
         for index, task in enumerate(tasks):
             msg = TaskMessage(
                 batch_id=batch_id,
@@ -266,6 +281,7 @@ class JobBackend:
                 request_id=task.request_id,
                 task=task,
                 events_topic=bridge_topic,
+                parent_spawn=parent_spawn,
             )
             await self._emit_dispatched(agent=agent, task=task)
             await self._broker.publish(topic, msg.model_dump_json().encode())
@@ -342,6 +358,27 @@ class JobBackend:
             await self._event_emitter.emit(event)
         except Exception as exc:  # pragma: no cover — emitter contract is no-raise
             await log.aerror("event_bridge_emit_failed", error=str(exc))
+
+
+def _parent_spawn_from_context(context: AgentContext) -> ParentSpawn | None:
+    """Synthesise a :class:`ParentSpawn` snapshot from a cascaded
+    :class:`AgentContext`, or ``None`` for top-level dispatches.
+
+    The publisher-side context already carries the child's depth /
+    parent_agent / parent_trace_id / ancestors (built by
+    :meth:`AgentRuntime.run` from the entry-time spawn frame). This helper
+    inverts those into the parent's viewpoint so the worker can reconstruct
+    a ``SpawnFrame`` without seeing the publisher's contextvars.
+    """
+    if context.parent_agent is None or context.parent_trace_id is None:
+        return None
+    parent_ancestors = context.ancestors - {context.parent_agent}
+    return ParentSpawn(
+        agent_name=context.parent_agent,
+        trace_id=context.parent_trace_id,
+        depth=max(context.depth - 1, 0),
+        ancestors=parent_ancestors,
+    )
 
 
 def _msg_to_result(

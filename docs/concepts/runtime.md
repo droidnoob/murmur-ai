@@ -83,8 +83,9 @@ from murmur.middleware.cost_tracking import TokenBudget
 runtime = AgentRuntime(
     options=RuntimeOptions(
         timeout_seconds=300,
-        retry_attempts=0,
-        depth_limit=4,
+        retry_max_attempts=1,
+        max_spawn_depth=4,
+        max_total_spawns=1000,
         token_budget=TokenBudget(limit=1_000_000),
         mcp_eager_start=False,
     ),
@@ -94,10 +95,55 @@ runtime = AgentRuntime(
 | Field | Default | Effect |
 |---|---|---|
 | `timeout_seconds` | `300` | Per-call wall clock cap. |
-| `retry_attempts` | `0` | Retries on `SpawnError`. Off by default. |
-| `depth_limit` | `4` | Max cascading spawn depth. |
+| `retry_max_attempts` | `1` | Retries on `SpawnError`. `1` = no retry. |
+| `max_spawn_depth` | `4` | Max cascading spawn depth — see [Cascading spawns](#cascading-spawns). |
+| `max_total_spawns` | `None` | Optional per-runtime kill switch on total dispatches — see [Cascading spawns](#cascading-spawns). |
 | `token_budget` | `None` | If set, wires `CostTrackingMiddleware`. See [Cost](cost.md). |
 | `mcp_eager_start` | `False` | If set, holds MCP subprocesses warm across runs. See [MCP](mcp.md). |
+
+## Cascading spawns
+
+When an agent's tool loop calls `runtime.run` (typically through
+[`spawn_agents`](tools.md#spawn_agents-orchestration-as-a-tool)), the runtime threads a
+parent → child relationship through the new run automatically. Three
+guards keep an over-eager LLM from running away with the cluster:
+
+- **Depth limit.** `RuntimeOptions.max_spawn_depth` (default `4`)
+  caps how far the chain can grow. The runtime increments
+  `AgentContext.depth` per cascade level; `DepthLimitMiddleware`
+  rejects with `DepthLimitError` once the cap is hit.
+- **Cycle rejection.** Every run carries a frozenset of ancestor
+  agent names on `AgentContext.ancestors`. If a child's name already
+  appears on that chain, `runtime.run` raises `SpawnCycleError` before
+  any backend work — A → B → A reentry never executes. No graph store
+  is needed; the ancestor set propagates per-run.
+- **Per-runtime spawn cap.** `RuntimeOptions.max_total_spawns`
+  (default `None` — unbounded) is an opt-in kill switch on total
+  dispatches over the runtime's lifetime. Set it to a finite value
+  for short-lived process boundaries (tests, batch jobs, sandbox
+  runs); leave it `None` for long-lived workers / servers — once
+  the cap is exhausted, further dispatches raise `SpawnCapError`
+  and the counter never resets, so a finite value on a long-lived
+  runtime will eventually self-brick. Use this independently of
+  `token_budget` to catch runaway cascades before the cost meter
+  does.
+
+Children also inherit a `parent_trace_id` field on every
+`RuntimeEvent`, so observability backends can stitch a cascading run
+into a single tree without extra correlation work.
+
+`runtime.gather` participates in the same scheme: when called from
+inside a parent's run it derives one shared parent context and applies
+it to every slot, charges one spawn-cap slot per task, and rejects on
+cycle. Top-level `gather` calls behave like top-level `run` — fresh
+context, no parent linkage.
+
+Cross-process cascade — when the runtime is broker-backed
+(`JobBackend`), the parent snapshot is serialised onto each
+`TaskMessage` and the receiving `Worker` rebuilds the parent
+`SpawnFrame` so cycle / depth / `parent_trace_id` enforcement survives
+the broker hop. The graph itself is per-run; it does not federate
+across runtimes that share a broker.
 
 ## `publish_events` — distributed observability
 
@@ -188,10 +234,15 @@ Timeout → DepthLimit → CostTracking? → Retry? → dispatch_stage(backend.s
 
 `Timeout` wraps the whole chain so a stuck child cancels regardless of
 which inner stage is mid-flight. `DepthLimit` rejects recursive spawns
-that would push past `RuntimeOptions.depth_limit`. `CostTracking` only
-appears when `RuntimeOptions.token_budget` is set; `Retry` only when
-`RuntimeOptions.retry_attempts > 1`. `dispatch_stage` is terminal — it
-calls `backend.spawn` and returns the result.
+that would push past `RuntimeOptions.max_spawn_depth`. `CostTracking`
+only appears when `RuntimeOptions.token_budget` is set; `Retry` only
+when `RuntimeOptions.retry_max_attempts > 1`. `dispatch_stage` is
+terminal — it calls `backend.spawn` and returns the result.
+
+Cycle and total-spawn-cap checks happen *before* the pipeline runs
+— they reject in `runtime.run()` itself so a rejected cascade never
+consumes a spawn slot or burns timeout budget. See
+[Cascading spawns](#cascading-spawns).
 
 `gather` deliberately bypasses this pipeline (the per-slot path calls
 `backend.gather` directly). Per-slot retries / timeouts aren't applied

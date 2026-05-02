@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
@@ -30,7 +31,13 @@ from murmur.backends._faststream_broker import FastStreamBroker
 from murmur.backends._inmemory_broker import InMemoryBroker
 from murmur.backends.async_backend import AsyncBackend
 from murmur.backends.job import JobBackend
-from murmur.core.errors import RegistryError, SpecValidationError
+from murmur.core.errors import (
+    DepthLimitError,
+    RegistryError,
+    SpawnCapError,
+    SpawnCycleError,
+    SpecValidationError,
+)
 from murmur.core.pipeline import Pipeline, PipelineContext
 from murmur.middleware.cost_tracking import CostTrackingMiddleware, TokenBudget
 from murmur.middleware.depth_limit import DepthLimitMiddleware
@@ -56,6 +63,37 @@ _FASTSTREAM_SCHEMES: frozenset[str] = frozenset({"kafka", "nats", "amqp", "redis
 _KNOWN_SCHEMES: frozenset[str] = frozenset({"memory"}) | _FASTSTREAM_SCHEMES
 
 
+class _SpawnFrame(BaseModel):
+    """Currently-executing run's stack frame — what nested ``runtime.run``
+    calls look up to derive their child :class:`AgentContext`.
+
+    Carries the agent's own name (for the ancestor set), its context
+    (for depth/ancestors composition), and its ``trace_id`` (so child
+    events can attribute back through ``parent_trace_id``).
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    agent_name: str
+    agent_context: AgentContext
+    trace_id: str
+
+
+_current_spawn: contextvars.ContextVar[_SpawnFrame | None] = contextvars.ContextVar(
+    "murmur_current_spawn", default=None
+)
+"""Per-task contextvar carrying the currently-executing run's
+:class:`_SpawnFrame`. Set by :meth:`AgentRuntime.run` for the duration of a
+dispatch; read by sub-spawn entry points (e.g. ``spawn_agents``) to derive
+the child :class:`AgentContext` (depth + ancestors + parent_trace_id).
+
+Lives at module level because ``contextvars`` are scoped per-task by Python's
+asyncio runtime — a fresh value set in a ``Task`` doesn't leak back to its
+parent. Cross-process / cross-worker propagation is intentionally out of
+scope: cycle detection only meaningful within a single run, which always
+executes inside one process even with :class:`JobBackend`."""
+
+
 class RuntimeOptions(BaseModel):
     """Frozen tuning knobs for :class:`AgentRuntime`.
 
@@ -78,6 +116,19 @@ class RuntimeOptions(BaseModel):
     ``AgentContext.depth`` is already at or above this value. Top-level
     runs have depth 0, so the limit only matters once the sub-agent
     spawning path is in use."""
+
+    max_total_spawns: int | None = None
+    """Optional per-runtime kill switch for total dispatches over the
+    runtime's lifetime. ``None`` (default) = unbounded — what long-lived
+    workers and servers want.
+
+    When set, every ``run()`` and every backend-native ``gather()`` slot
+    decrements the budget; once exhausted, further dispatches fail with
+    :class:`SpawnCapError` and the counter never resets. Independent of
+    token budget — a runaway cascade hits this before the cost meter
+    catches up. Use it as an explicit opt-in safety rail (e.g. tests that
+    exercise the cap, or short-lived process boundaries) — leave it
+    ``None`` for any runtime that handles ongoing traffic."""
 
     retry_max_attempts: int = 1
     """``1`` (default) means no retry. Set to ``2+`` to enable
@@ -178,6 +229,13 @@ class AgentRuntime:
         self._mcp_supervisor_tasks: dict[int, asyncio.Task[None]] = {}
         self._mcp_supervisor_errors: dict[int, BaseException] = {}
         self._mcp_warm_lock: asyncio.Lock | None = None
+        # Cascading-spawn tally — incremented on every successful pre-flight
+        # check in ``run()`` (top-level + cascaded). Once it reaches
+        # ``options.max_total_spawns`` further dispatches raise
+        # :class:`SpawnCapError`. Lock-protected since multiple cascaded
+        # children can race on the same runtime instance.
+        self._spawn_count: int = 0
+        self._spawn_count_lock: asyncio.Lock | None = None
 
     @property
     def event_emitter(self) -> EventEmitter:
@@ -214,19 +272,98 @@ class AgentRuntime:
         unaffected — its per-slot path bypasses middleware to keep batch
         semantics simple. Tune per-run behavior via :class:`RuntimeOptions`
         passed to :meth:`__init__`.
+
+        Cascading-spawn semantics: when this call originates from inside
+        another agent's run (the ``spawn_agents`` tool, for instance), the
+        runtime reads the parent's frame from the ``_current_spawn``
+        contextvar, derives the child :class:`AgentContext` (depth + 1,
+        ancestors + parent_name, parent_trace_id = parent's trace_id), and
+        rejects cycles before any backend work. The runtime's per-instance
+        ``_spawn_count`` is incremented on every accepted dispatch and
+        rejects further runs with :class:`SpawnCapError` once
+        :attr:`RuntimeOptions.max_total_spawns` is reached.
+
+        Cycle detection is **name-based**, not run-id-based. ``Agent.name``
+        is the registry key and the canonical identity for an agent in
+        Murmur's model — two ``runtime.run`` calls on the same agent with
+        different inputs are still the same agent re-entering itself, and
+        that's the runaway case we want to catch. If a workflow needs the
+        same logic at a deeper level, give the deeper instance a distinct
+        name (``worker-rev2`` etc.) — that disambiguates intent and keeps
+        the cycle guard meaningful.
         """
         resolved = self._resolve(agent)
         await self._warm_mcp_providers(resolved)
-        agent_context = AgentContext()
+
+        # Cycle: name already on the parent chain → reject before claiming
+        # a spawn slot or warming any backend state.
+        parent_frame = _current_spawn.get()
+        if parent_frame is not None:
+            chain = parent_frame.agent_context.ancestors | {parent_frame.agent_name}
+            if resolved.name in chain:
+                raise SpawnCycleError(
+                    f"agent {resolved.name!r} is already on the spawn chain "
+                    f"({sorted(chain)}); cascading would form a cycle"
+                )
+
+        if parent_frame is None:
+            agent_context = AgentContext()
+        else:
+            agent_context = AgentContext(
+                depth=parent_frame.agent_context.depth + 1,
+                parent_agent=parent_frame.agent_name,
+                parent_trace_id=parent_frame.trace_id,
+                ancestors=parent_frame.agent_context.ancestors
+                | {parent_frame.agent_name},
+            )
+
+        async def claim_stage(
+            ctx: PipelineContext,
+            next_stage: Any,
+        ) -> AgentResult[BaseModel]:
+            # Spawn cap is charged AFTER pre-dispatch validation
+            # (DepthLimit, CostTracking) so a rejected run never burns a
+            # slot. Sits inside the Retry boundary deliberately —
+            # RetryMiddleware re-invokes the next stage on backend
+            # failure, but this stage runs once per ``run()`` because
+            # Retry wraps it (not the other way around).
+            await self._claim_spawn_slot(ctx.agent_name)
+            return await next_stage(ctx)
 
         async def dispatch_stage(
             ctx: PipelineContext,
             _next: object,  # terminal — never invoked
         ) -> AgentResult[BaseModel]:
             prepared = await resolved.context_passer.prepare(ctx.agent_context, task)
+            # Re-overlay the cascading-spawn bookkeeping (depth / ancestors /
+            # parent linkage). These fields are runtime-owned, not
+            # context-passer territory — a NullContextPasser that returns
+            # ``AgentContext()`` must not be allowed to wipe parent linkage
+            # or downstream ``parent_trace_id`` / cycle detection breaks.
+            prepared = prepared.model_copy(
+                update={
+                    "depth": ctx.agent_context.depth,
+                    "parent_agent": ctx.agent_context.parent_agent,
+                    "parent_trace_id": ctx.agent_context.parent_trace_id,
+                    "ancestors": ctx.agent_context.ancestors,
+                }
+            )
             handle = await self._backend.spawn(resolved, task, prepared)
             return await self._backend.result(handle)
 
+        # Pipeline ordering — outside-in:
+        #
+        #   Timeout
+        #     DepthLimit       ← rejects before claim_stage
+        #     CostTracking?    ← rejects before claim_stage (pre-check arm)
+        #     ClaimSlot        ← cap charged here, not at run() entry
+        #     Retry?           ← retries dispatch_stage only
+        #       dispatch_stage ← backend handoff
+        #
+        # Putting ClaimSlot after DepthLimit and CostTracking guarantees
+        # locally-rejected work doesn't burn ``max_total_spawns``. Putting
+        # it above Retry guarantees one slot per user-visible ``run()``,
+        # not one slot per retry attempt.
         stages: list[object] = [
             TimeoutMiddleware(self._options.timeout_seconds),
             DepthLimitMiddleware(self._options.max_spawn_depth),
@@ -241,6 +378,7 @@ class AgentRuntime:
                     event_emitter=self._emitter,
                 )
             )
+        stages.append(claim_stage)
         if self._options.retry_max_attempts > 1:
             stages.append(
                 RetryMiddleware(
@@ -254,7 +392,67 @@ class AgentRuntime:
         ctx = PipelineContext(
             task=task, agent_name=resolved.name, agent_context=agent_context
         )
-        return await pipeline.run(ctx)
+        # Publish this run as the parent frame for any cascaded
+        # ``runtime.run`` calls fired from inside the agent's tool loop.
+        # Reset on exit so concurrent siblings under one grandparent don't
+        # see each other as ancestors.
+        token = _current_spawn.set(
+            _SpawnFrame(
+                agent_name=resolved.name,
+                agent_context=agent_context,
+                trace_id=task.request_id,
+            )
+        )
+        try:
+            return await pipeline.run(ctx)
+        finally:
+            _current_spawn.reset(token)
+
+    async def _claim_spawn_slot(self, agent_name: str) -> None:
+        """Atomic check-and-increment against ``options.max_total_spawns``.
+
+        When the cap is ``None`` (default) the counter still increments —
+        useful for observability — but no rejection ever fires. When the
+        cap is set, rejects with :class:`SpawnCapError` once exhausted; the
+        counter never resets, so the runtime stays sealed until restart.
+        Lazy lock binds to the current event loop.
+        """
+        await self._claim_spawn_batch(agent_name, 1)
+
+    async def _claim_spawn_batch(self, agent_name: str, count: int) -> None:
+        """Atomic batch-level check-and-increment.
+
+        Either claims all ``count`` slots or none — never partially. Used
+        by :meth:`gather` so an oversized batch can't burn through a
+        finite ``max_total_spawns`` and brick subsequent dispatches when
+        the request itself never executes.
+        """
+        if count < 0:
+            raise SpecValidationError("count must be >= 0")
+        if count == 0:
+            return
+        if self._spawn_count_lock is None:
+            self._spawn_count_lock = asyncio.Lock()
+        async with self._spawn_count_lock:
+            cap = self._options.max_total_spawns
+            if cap is not None and self._spawn_count + count > cap:
+                remaining = max(cap - self._spawn_count, 0)
+                raise SpawnCapError(
+                    f"runtime spawn cap would be exceeded "
+                    f"({cap} total spawns; {remaining} remaining; "
+                    f"requested {count}); refusing to dispatch "
+                    f"{agent_name!r}"
+                )
+            self._spawn_count += count
+
+    @property
+    def spawn_count(self) -> int:
+        """Total dispatches accepted by this runtime (top-level + cascaded).
+
+        Read-only — useful for tests and observability. Compare against
+        :attr:`RuntimeOptions.max_total_spawns` to gauge headroom.
+        """
+        return self._spawn_count
 
     async def gather(
         self,
@@ -281,17 +479,97 @@ class AgentRuntime:
         resolved = self._resolve(agent)
         await self._warm_mcp_providers(resolved)
 
+        # Cycle: same name in-chain rule that ``run`` enforces. Reject before
+        # claiming any slots so the cap stays honest on cycle rejection.
+        parent_frame = _current_spawn.get()
+        if parent_frame is not None:
+            chain = parent_frame.agent_context.ancestors | {parent_frame.agent_name}
+            if resolved.name in chain:
+                raise SpawnCycleError(
+                    f"agent {resolved.name!r} is already on the spawn chain "
+                    f"({sorted(chain)}); gather would form a cycle"
+                )
+
+        # Per-slot context: every gathered slot shares one parent frame.
+        if parent_frame is None:
+            slot_context = AgentContext()
+        else:
+            slot_context = AgentContext(
+                depth=parent_frame.agent_context.depth + 1,
+                parent_agent=parent_frame.agent_name,
+                parent_trace_id=parent_frame.trace_id,
+                ancestors=parent_frame.agent_context.ancestors
+                | {parent_frame.agent_name},
+            )
+
+        # Depth: ``gather`` doesn't go through the pipeline (no
+        # DepthLimitMiddleware on the batch path), so enforce the same
+        # rule inline. Mirrors ``DepthLimitMiddleware.__call__`` —
+        # rejects when the slot's depth would equal or exceed the cap.
+        # Without this, a parent at ``depth = max_spawn_depth - 1``
+        # could fan out children at the cap (or deeper, if those
+        # children gather again) and bypass the recursion guard
+        # entirely.
+        if slot_context.depth >= self._options.max_spawn_depth:
+            raise DepthLimitError(
+                f"cascading-spawn depth {slot_context.depth} exceeds limit "
+                f"{self._options.max_spawn_depth} (gather agent={resolved.name})"
+            )
+
         from murmur.events.types import EventType, RuntimeEvent
 
         # Use the first task's request_id as the batch's trace_id when
         # available; otherwise fall back to the runtime_id (a batch with no
         # tasks is rejected upstream by the empty-list short-circuit).
         batch_trace_id = tasks[0].request_id if tasks else self._runtime_id
+
+        # Token budget pre-check: ``run`` enforces this through
+        # ``CostTrackingMiddleware``, but ``gather`` doesn't go through
+        # the pipeline. Mirror the gate inline — fail closed when the
+        # budget is already exhausted, before claiming any slots, so a
+        # batch dispatched on an empty budget never burns cap or fires
+        # work. Aggregate post-charge happens after results come back.
+        budget = self._options.token_budget
+        if budget is not None and budget.remaining <= 0:
+            await self._emitter.emit(
+                RuntimeEvent(
+                    event_type=EventType.BUDGET_EXCEEDED,
+                    agent_name=resolved.name,
+                    trace_id=batch_trace_id,
+                    parent_trace_id=slot_context.parent_trace_id,
+                    payload={
+                        "limit": budget.limit,
+                        "used": budget.used,
+                        "scope": "runtime",
+                        "batch": True,
+                        "task_count": len(tasks),
+                    },
+                )
+            )
+            from murmur.core.errors import BudgetExceededError
+
+            raise BudgetExceededError(
+                f"token budget exhausted before gather agent={resolved.name!r} "
+                f"(limit={budget.limit}, used={budget.used}, "
+                f"task_count={len(tasks)})"
+            )
+
+        # Cap: backend-native ``gather`` bypasses ``run`` and thus the
+        # per-call cap charge. Apply the cap atomically at the batch level
+        # so an oversized request fails closed without mutating the counter
+        # — otherwise an explicit ``max_total_spawns`` could be permanently
+        # exhausted by a single rejected ``gather`` call (Codex review).
+        # ``_fallback_gather`` still charges per-call via ``self.run``, so
+        # the per-slot claim only runs on the backend-native path.
+        backend_gather = getattr(self._backend, "gather", None)
+        if callable(backend_gather):
+            await self._claim_spawn_batch(resolved.name, len(tasks))
         await self._emitter.emit(
             RuntimeEvent(
                 event_type=EventType.BATCH_STARTED,
                 agent_name=resolved.name,
                 trace_id=batch_trace_id,
+                parent_trace_id=slot_context.parent_trace_id,
                 payload={
                     "task_count": len(tasks),
                     "max_concurrency": max_concurrency,
@@ -299,13 +577,26 @@ class AgentRuntime:
             )
         )
 
-        backend_gather = getattr(self._backend, "gather", None)
         if callable(backend_gather):
             results = await backend_gather(
-                resolved, tasks, max_concurrency=max_concurrency
+                resolved, tasks, slot_context, max_concurrency=max_concurrency
             )
         else:
             results = await self._fallback_gather(resolved, tasks, max_concurrency)
+
+        # Token budget post-charge: aggregate the per-slot ``tokens_used``
+        # from the batch and decrement the runtime-wide budget. Mirrors
+        # ``CostTrackingMiddleware`` semantics — pre-check is gated; this
+        # post-charge is the bookkeeping that lets the *next* call see an
+        # accurate remaining count. ``_fallback_gather`` already charges
+        # per-call via ``self.run`` (CostTrackingMiddleware); only the
+        # backend-native path needs this aggregate charge.
+        if budget is not None and callable(backend_gather):
+            batch_tokens = sum(
+                int(getattr(r.metadata, "tokens_used", 0) or 0) for r in results
+            )
+            if batch_tokens > 0:
+                await budget.consume(batch_tokens)
 
         success_count = sum(1 for r in results if r.is_ok())
         await self._emitter.emit(
@@ -313,6 +604,7 @@ class AgentRuntime:
                 event_type=EventType.BATCH_COMPLETED,
                 agent_name=resolved.name,
                 trace_id=batch_trace_id,
+                parent_trace_id=slot_context.parent_trace_id,
                 payload={
                     "task_count": len(tasks),
                     "success_count": success_count,

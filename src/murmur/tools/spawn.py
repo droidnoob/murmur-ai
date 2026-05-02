@@ -34,12 +34,15 @@ The factory bounds what the LLM can spawn (mode A): the parent picks
 Per-child failures are captured into ``SpawnResult(success=False,
 error=...)`` rather than propagated — partial fan-outs always return.
 
-Cascading depth limiting (parent → child → grandchild) is **not** enforced
-here today: the tool's max_concurrency caps simultaneity, but a child that
-also has ``spawn_agents`` in its ``tools=`` could in principle recurse.
-Don't add ``spawn_agents`` to the template's tool surface — register it
-explicitly only on the orchestrator's per-agent tool set. Full
-cycle-detection lands alongside the cascading-spawn graph work.
+Cascading-spawn safety lives one layer down: every ``runtime.run`` call —
+including the ones this tool issues — reads the parent frame from
+:data:`murmur.runtime._current_spawn` and derives the child's depth +
+ancestor set. ``DepthLimitMiddleware`` rejects past
+:attr:`RuntimeOptions.max_spawn_depth`; cycles raise
+:class:`SpawnCycleError` before any backend work; the runtime-wide
+:attr:`RuntimeOptions.max_total_spawns` kill switch raises
+:class:`SpawnCapError` when exhausted. ``max_concurrency`` here only caps
+simultaneity per fan-out call.
 """
 
 from __future__ import annotations

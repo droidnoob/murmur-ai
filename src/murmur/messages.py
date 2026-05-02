@@ -26,6 +26,37 @@ from pydantic import BaseModel, ConfigDict, Field
 from murmur.types import TaskSpec
 
 
+class ParentSpawn(BaseModel):
+    """Cascading-spawn parent metadata serialised onto a :class:`TaskMessage`.
+
+    When a sub-spawn crosses a broker boundary (publisher in process X,
+    worker in process Y), the worker has no in-memory access to process
+    X's spawn frame. This snapshot carries just enough state for the
+    worker to reconstruct the parent frame and continue cycle / depth /
+    ``parent_trace_id`` enforcement on its side.
+
+    Conversation history (``AgentContext.messages``) is intentionally
+    omitted — it's application data, not orchestration metadata, and it's
+    the context-passer's job to assemble it on each side.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    agent_name: str
+    """Name of the parent agent (the one that issued this sub-spawn)."""
+
+    trace_id: str
+    """``trace_id`` of the parent run — child events attribute back via this."""
+
+    depth: int
+    """Depth of the parent's ``AgentContext`` (the child becomes ``depth + 1``)."""
+
+    ancestors: frozenset[str] = Field(default_factory=frozenset)
+    """Ancestor names *of the parent itself* (i.e. excluding the parent's own
+    name). The worker derives the child's full ancestor set as
+    ``ancestors | {agent_name}``."""
+
+
 class TaskMessage(BaseModel):
     """Envelope published onto a task topic; consumed by a worker."""
 
@@ -55,6 +86,12 @@ class TaskMessage(BaseModel):
     publisher's local emitter alongside the worker's. Defaults to
     ``None`` — log-aggregation pipelines (Datadog/Loki) cover the common
     case without doubling broker load."""
+
+    parent_spawn: ParentSpawn | None = None
+    """Cascading-spawn parent metadata, when this task is a sub-spawn.
+    ``None`` for top-level dispatches. The worker uses this to rebuild
+    the parent frame so cycle / depth / ``parent_trace_id`` enforcement
+    survives the broker hop."""
 
 
 class ResultMessage(BaseModel):
@@ -118,6 +155,7 @@ def events_topic(runtime_id: str) -> str:
 
 
 __all__ = [
+    "ParentSpawn",
     "ResultMessage",
     "TaskMessage",
     "events_topic",

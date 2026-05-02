@@ -31,6 +31,25 @@ class DepthLimitError(MurmurError):
     """Cascading-spawn depth limit was reached."""
 
 
+class SpawnCycleError(MurmurError):
+    """A cascading spawn would re-enter an ancestor agent, forming a cycle.
+
+    Raised when an agent's name already appears in the parent chain at the
+    moment the runtime is asked to dispatch it. Cycles are detected per-run
+    against an in-memory ancestor frozenset on :class:`AgentContext`; the
+    runtime never expands a cycle, so the offending child spawn never executes.
+    """
+
+
+class SpawnCapError(MurmurError):
+    """The runtime-wide cascading-spawn cap was exhausted.
+
+    The cap (``RuntimeOptions.max_total_spawns``) is a kill switch independent
+    of token budget — a runaway agent generating unbounded child spawns hits
+    this before the cost meter catches up.
+    """
+
+
 class SpecValidationError(MurmurError):
     """An agent or group spec failed validation."""
 

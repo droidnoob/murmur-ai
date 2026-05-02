@@ -78,6 +78,7 @@ class AsyncBackend:
                 agent_name=agent.name,
                 task_id=task.id,
                 trace_id=task.request_id,
+                parent_trace_id=context.parent_trace_id,
                 payload={
                     "backend": self.name,
                     "trust_level": agent.trust_level.value,
@@ -136,6 +137,7 @@ class AsyncBackend:
         self,
         agent: Agent,
         tasks: Sequence[TaskSpec],
+        context: AgentContext | None = None,
         *,
         max_concurrency: int = 100,
     ) -> list[AgentResult[BaseModel]]:
@@ -145,9 +147,15 @@ class AsyncBackend:
         (matching :meth:`AgentRuntime.run` semantics). Per-task failures land
         in their slot's :attr:`AgentResult.error` — this method never raises
         on partial-failure batches. Results come back in input order.
+
+        ``context`` carries the cascading-spawn parent linkage shared across
+        every slot — :meth:`AgentRuntime.gather` derives it from the calling
+        spawn frame so per-task events emit a ``parent_trace_id``. ``None``
+        (default) is a top-level batch with no parent.
         """
         if not tasks:
             return []
+        base_context = context if context is not None else AgentContext()
         queue: asyncio.Queue[tuple[int, TaskSpec]] = asyncio.Queue()
         for index, task in enumerate(tasks):
             queue.put_nowait((index, task))
@@ -161,7 +169,18 @@ class AsyncBackend:
                 except asyncio.QueueEmpty:
                     return
                 try:
-                    ctx = await agent.context_passer.prepare(AgentContext(), task)
+                    ctx = await agent.context_passer.prepare(base_context, task)
+                    # Re-overlay the cascading-spawn bookkeeping after the
+                    # context-passer (which is free to drop conversation
+                    # history but must not drop parent linkage).
+                    ctx = ctx.model_copy(
+                        update={
+                            "depth": base_context.depth,
+                            "parent_agent": base_context.parent_agent,
+                            "parent_trace_id": base_context.parent_trace_id,
+                            "ancestors": base_context.ancestors,
+                        }
+                    )
                     handle = await self.spawn(agent, task, ctx)
                     results[index] = await self.result(handle)
                 except Exception as exc:  # safety net — _execute swallows already
@@ -184,10 +203,25 @@ class AsyncBackend:
         self,
         agent: Agent,
         task: TaskSpec,
-        context: AgentContext,  # noqa: ARG002 — passed by the dispatcher; ContextPasser uses it
+        context: AgentContext,
         handle: AgentHandle,  # noqa: ARG002 — passed by the dispatcher; reserved for richer logging
     ) -> AgentResult[BaseModel]:
         start = time.perf_counter()
+        # Push a slot-local spawn frame so any ``runtime.run`` issued by
+        # this agent's tool loop sees this run as the parent. ``runtime.run``
+        # already pushes the same frame for its own dispatch path, but
+        # ``runtime.gather``'s pool workers don't — putting the push here
+        # covers both call sites uniformly. Idempotent re-push for the
+        # ``run()`` path (same agent, same context, same trace_id).
+        from murmur.runtime import _current_spawn, _SpawnFrame
+
+        spawn_token = _current_spawn.set(
+            _SpawnFrame(
+                agent_name=agent.name,
+                agent_context=context,
+                trace_id=task.request_id,
+            )
+        )
         structlog.contextvars.bind_contextvars(
             request_id=task.request_id,
             agent_name=agent.name,
@@ -209,6 +243,7 @@ class AsyncBackend:
                         agent_name=agent.name,
                         task_id=task.id,
                         trace_id=task.request_id,
+                        parent_trace_id=context.parent_trace_id,
                         payload={
                             "duration_ms": duration_ms,
                             "tokens_used": tokens_used,
@@ -241,6 +276,7 @@ class AsyncBackend:
                         agent_name=agent.name,
                         task_id=task.id,
                         trace_id=task.request_id,
+                        parent_trace_id=context.parent_trace_id,
                         payload={
                             "duration_ms": duration_ms,
                             "error": str(wrapped),
@@ -259,6 +295,7 @@ class AsyncBackend:
             structlog.contextvars.unbind_contextvars(
                 "request_id", "agent_name", "task_id", "backend", "trust_level"
             )
+            _current_spawn.reset(spawn_token)
 
     async def _build_pa_agent(
         self,

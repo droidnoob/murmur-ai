@@ -176,8 +176,45 @@ class Worker:
 
     async def _run_one(self, agent_name: str, msg: TaskMessage) -> None:
         from murmur.events.broker import bind_event_topic, reset_event_topic
+        from murmur.runtime import _current_spawn, _SpawnFrame
+        from murmur.types import AgentContext
 
         agent = self._agents[agent_name]
+        # A Worker is a re-entry point. With an in-memory broker the
+        # publisher and consumer share an asyncio context, so any spawn
+        # frame on the publisher's contextvar leaks into the worker's
+        # ``runtime.run`` and mis-fires cascade detection. Reset to a
+        # known value derived from the message envelope:
+        #
+        # - ``msg.parent_spawn is None``  → top-level dispatch; clear.
+        # - ``msg.parent_spawn`` set      → a sub-spawn that crossed a
+        #   broker boundary; rebuild the parent ``SpawnFrame`` so the
+        #   worker-side run derives the same depth / ancestors /
+        #   parent_trace_id the publisher would have.
+        #
+        # Trust model: ``parent_spawn`` is taken at face value. Murmur
+        # treats the broker as a trusted channel between trusted
+        # publishers and trusted workers — any party with broker write
+        # access can already publish arbitrary tasks for arbitrary
+        # agents, so forging a lower ``depth`` or empty ``ancestors`` is
+        # the least of the resulting problems. Cascading-spawn controls
+        # are defensive programming against runaway LLM tool loops, not
+        # a security boundary against hostile producers. Deployments
+        # exposing the broker to untrusted writers must layer broker
+        # auth, topic ACLs, and (if the threat model warrants it) signed
+        # envelopes on top — that work lives outside Murmur.
+        if msg.parent_spawn is None:
+            spawn_token = _current_spawn.set(None)
+        else:
+            parent_frame = _SpawnFrame(
+                agent_name=msg.parent_spawn.agent_name,
+                trace_id=msg.parent_spawn.trace_id,
+                agent_context=AgentContext(
+                    depth=msg.parent_spawn.depth,
+                    ancestors=msg.parent_spawn.ancestors,
+                ),
+            )
+            spawn_token = _current_spawn.set(parent_frame)
         structlog.contextvars.bind_contextvars(
             request_id=msg.request_id,
             batch_id=msg.batch_id,
@@ -244,6 +281,7 @@ class Worker:
                     "request_id", "batch_id", "task_id", "agent_name"
                 )
                 reset_event_topic(events_token)
+                _current_spawn.reset(spawn_token)
         await self._broker.publish(msg.reply_to, response.model_dump_json().encode())
 
 

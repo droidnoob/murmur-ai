@@ -189,9 +189,21 @@ class AgentContext(BaseModel):
     agent decides what fills this on each spawn."""
 
     parent_agent: str | None = None
-    """Name of the agent that spawned this run, when this is a sub-spawn.
-    ``None`` for top-level runs. Phase 4 ties this to cascading-spawn
-    cycle detection."""
+    """Name of the immediate parent agent, when this is a sub-spawn.
+    ``None`` for top-level runs."""
+
+    parent_trace_id: str | None = None
+    """``trace_id`` of the parent run that issued this sub-spawn. Threaded
+    through onto every child :class:`RuntimeEvent` so observability backends
+    can stitch a cascading run into a single tree. ``None`` for top-level
+    runs."""
+
+    ancestors: frozenset[str] = Field(default_factory=frozenset)
+    """Set of agent names currently above this run in the spawn chain.
+    Empty for top-level runs; for a sub-spawn it contains every ancestor up
+    to the top-level agent. The runtime rejects a spawn whose target name
+    already appears in ``ancestors`` with :class:`SpawnCycleError` —
+    preventing A → B → A reentry without a separate graph store."""
 
     depth: int = 0
     """Cascading-spawn depth. ``0`` for top-level runs; incremented per
