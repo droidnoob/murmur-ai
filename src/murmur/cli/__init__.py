@@ -5,6 +5,7 @@ Subcommands:
 - ``murmur run <script.py>`` — execute a Python script with the runtime in scope
 - ``murmur validate <specs/>`` — validate every YAML spec under a directory
 - ``murmur worker start --agents X --broker URL`` — start a distributed consumer
+- ``murmur serve --port 8420`` — HTTP server for registered agents + live event SSE
 
 ``main`` is the ``[project.scripts] murmur`` entry point: ``murmur …`` runs
 :func:`main` with the parsed arguments. Tests drive the same function via
@@ -20,6 +21,7 @@ import sys
 import structlog
 
 from murmur.cli.run import register_run
+from murmur.cli.serve import register_serve
 from murmur.cli.validate import register_validate
 from murmur.cli.worker import register_worker
 
@@ -38,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     register_run(sub)
     register_validate(sub)
     register_worker(sub)
+    register_serve(sub)
     return parser
 
 

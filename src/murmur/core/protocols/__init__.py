@@ -13,6 +13,7 @@ from murmur.core.protocols.pipeline import Middleware, NextStage, Pipeline, Stag
 from murmur.core.protocols.registry import Registry
 from murmur.core.protocols.router import RouteDecision, Router
 from murmur.core.protocols.tools import ToolExecutor, ToolProvider
+from murmur.core.protocols.toolsets import ToolDescriptor, ToolsetProvider
 from murmur.core.protocols.worker import OnComplete, OnError, OnStart, Worker
 
 __all__ = [
@@ -32,7 +33,9 @@ __all__ = [
     "RouteDecision",
     "Router",
     "Stage",
+    "ToolDescriptor",
     "ToolExecutor",
     "ToolProvider",
+    "ToolsetProvider",
     "Worker",
 ]

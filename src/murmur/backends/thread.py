@@ -16,13 +16,14 @@ import contextlib
 import time
 from typing import TYPE_CHECKING, Any
 
-import structlog
 import structlog.contextvars
 from pydantic import BaseModel
 
 from murmur._dispatch import build_pydantic_ai_agent
 from murmur.core.errors import SpawnError
 from murmur.core.protocols.backend import BackendStatus
+from murmur.events.log import LogEventEmitter
+from murmur.events.types import EventType, RuntimeEvent
 from murmur.tools.executor import ToolExecutor
 from murmur.tools.registry import ToolRegistry
 from murmur.types import (
@@ -39,9 +40,7 @@ if TYPE_CHECKING:
     import pydantic_ai
 
     from murmur.agent import Agent
-
-
-log: structlog.stdlib.BoundLogger = structlog.get_logger()
+    from murmur.core.protocols.events import EventEmitter
 
 
 class ThreadBackend:
@@ -54,10 +53,15 @@ class ThreadBackend:
         *,
         tool_registry: ToolRegistry | None = None,
         tool_executor: ToolExecutor | None = None,
+        event_emitter: EventEmitter | None = None,
     ) -> None:
         self._tool_registry: ToolRegistry = tool_registry or ToolRegistry()
+        self._emitter: EventEmitter = event_emitter or LogEventEmitter()
+        # If the user passes a tool_executor, it carries its own emitter; we
+        # don't second-guess. Otherwise build one that shares ours so both
+        # backend and tool events flow through the same sink.
         self._tool_executor: ToolExecutor = tool_executor or ToolExecutor(
-            self._tool_registry
+            self._tool_registry, event_emitter=self._emitter
         )
         self._tasks: dict[str, asyncio.Task[AgentResult[BaseModel]]] = {}
         self._killed: set[str] = set()
@@ -68,13 +72,17 @@ class ThreadBackend:
         task: TaskSpec,
         context: AgentContext,
     ) -> AgentHandle:
-        await log.ainfo(
-            "agent_spawned",
-            agent_name=agent.name,
-            task_id=task.id,
-            request_id=task.request_id,
-            backend=self.name,
-            trust_level=agent.trust_level.value,
+        await self._emitter.emit(
+            RuntimeEvent(
+                event_type=EventType.AGENT_SPAWNED,
+                agent_name=agent.name,
+                task_id=task.id,
+                trace_id=task.request_id,
+                payload={
+                    "backend": self.name,
+                    "trust_level": agent.trust_level.value,
+                },
+            )
         )
         handle = AgentHandle(agent_name=agent.name, task_id=task.id, backend=self.name)
         self._tasks[handle.handle_id] = asyncio.create_task(
@@ -190,19 +198,29 @@ class ThreadBackend:
         try:
             try:
                 pa_input = _apply_pre_hooks(agent, task)
-                pa_agent = self._build_pa_agent(agent, agent.tools, task.id)
+                pa_agent = await self._build_pa_agent(agent, agent.tools, task.id)
                 pa_result = await pa_agent.run(pa_input)
                 output = _apply_post_hooks(agent, pa_result.output)
                 duration_ms = int((time.perf_counter() - start) * 1000)
-                await log.ainfo(
-                    "agent_completed",
-                    duration_ms=duration_ms,
+                tokens_used = _extract_tokens(pa_result)
+                await self._emitter.emit(
+                    RuntimeEvent(
+                        event_type=EventType.AGENT_COMPLETED,
+                        agent_name=agent.name,
+                        task_id=task.id,
+                        trace_id=task.request_id,
+                        payload={
+                            "duration_ms": duration_ms,
+                            "tokens_used": tokens_used,
+                            "backend": self.name,
+                        },
+                    )
                 )
                 return AgentResult[BaseModel](
                     output=output,
                     metadata=ResultMetadata(
                         duration_ms=duration_ms,
-                        tokens_used=_extract_tokens(pa_result),
+                        tokens_used=tokens_used,
                         backend=self.name,
                     ),
                     agent_name=agent.name,
@@ -217,10 +235,18 @@ class ThreadBackend:
                     if isinstance(exc, SpawnError)
                     else SpawnError(f"agent {agent.name!r} failed: {exc}")
                 )
-                await log.aerror(
-                    "agent_failed",
-                    duration_ms=duration_ms,
-                    error=str(wrapped),
+                await self._emitter.emit(
+                    RuntimeEvent(
+                        event_type=EventType.AGENT_FAILED,
+                        agent_name=agent.name,
+                        task_id=task.id,
+                        trace_id=task.request_id,
+                        payload={
+                            "duration_ms": duration_ms,
+                            "error": str(wrapped),
+                            "backend": self.name,
+                        },
+                    )
                 )
                 return AgentResult[BaseModel](
                     output=None,
@@ -234,13 +260,13 @@ class ThreadBackend:
                 "request_id", "agent_name", "task_id", "backend", "trust_level"
             )
 
-    def _build_pa_agent(
+    async def _build_pa_agent(
         self,
         agent: Agent,
         allowed: frozenset[str],
         task_id: str,
     ) -> pydantic_ai.Agent[None, Any]:
-        return build_pydantic_ai_agent(
+        return await build_pydantic_ai_agent(
             agent=agent,
             allowed=allowed,
             registry=self._tool_registry,

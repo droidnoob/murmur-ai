@@ -17,6 +17,8 @@ directly. Supported schemes:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
@@ -30,6 +32,7 @@ from murmur.backends.job import JobBackend
 from murmur.backends.thread import ThreadBackend
 from murmur.core.errors import RegistryError, SpecValidationError
 from murmur.core.pipeline import Pipeline, PipelineContext
+from murmur.middleware.cost_tracking import CostTrackingMiddleware, TokenBudget
 from murmur.middleware.depth_limit import DepthLimitMiddleware
 from murmur.middleware.retry import RetryMiddleware
 from murmur.middleware.timeout import TimeoutMiddleware
@@ -43,7 +46,9 @@ if TYPE_CHECKING:
     from murmur.agent import Agent
     from murmur.core.protocols.backend import Backend
     from murmur.core.protocols.broker import Broker
+    from murmur.core.protocols.events import EventEmitter
     from murmur.core.protocols.registry import Registry
+    from murmur.core.protocols.toolsets import ToolsetProvider
     from murmur.groups.spec import AgentGroup
 
 
@@ -62,7 +67,7 @@ class RuntimeOptions(BaseModel):
     >>> runtime = AgentRuntime(options=RuntimeOptions(timeout_seconds=60))
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     timeout_seconds: float = 300.0
     """Cancel the run after this long. ``TimeoutMiddleware`` translates the
@@ -81,6 +86,14 @@ class RuntimeOptions(BaseModel):
     retry_backoff_factor: float = 1.5
     """Multiplicative backoff between retries
     (``backoff_factor ** attempt`` seconds)."""
+
+    token_budget: TokenBudget | None = None
+    """Optional token-cost ceiling for the runtime. ``None`` (default)
+    disables cost tracking. Construct via
+    :class:`murmur.middleware.TokenBudget(limit=...)`. Once the budget is
+    exhausted, subsequent ``runtime.run`` / ``runtime.gather`` calls fail
+    with :class:`BudgetExceededError` before dispatch and emit a
+    :data:`EventType.BUDGET_EXCEEDED` event."""
 
 
 class AgentRuntime:
@@ -107,17 +120,37 @@ class AgentRuntime:
         tool_registry: ToolRegistry | None = None,
         tool_executor: ToolExecutor | None = None,
         options: RuntimeOptions | None = None,
+        event_emitter: EventEmitter | None = None,
+        publish_events: bool = False,
     ) -> None:
+        from murmur.events.log import LogEventEmitter
+
         self._registry = registry
         self._tool_registry: ToolRegistry = tool_registry or ToolRegistry()
+        # Default emitter forwards every event to structlog with the same
+        # event names previously used by direct ``log.ainfo`` calls — opting
+        # out (e.g. ``MultiEventEmitter([])``) means no observability output.
+        self._emitter: EventEmitter = event_emitter or LogEventEmitter()
         self._tool_executor: ToolExecutor = tool_executor or ToolExecutor(
-            self._tool_registry
+            self._tool_registry, event_emitter=self._emitter
         )
         self._runtime_id: str = runtime_id or str(uuid.uuid4())
+        self._publish_events: bool = publish_events
         self._backend: Backend = backend or self._build_backend(
             broker_url=broker, broker_instance=broker_instance
         )
         self._options: RuntimeOptions = options or RuntimeOptions()
+        # Providers seen via ``_resolve`` — kept for shutdown cleanup. Object
+        # identity is the right key (Protocol instances aren't hashable in
+        # general, but our concrete is a regular class).
+        self._mcp_providers: list[ToolsetProvider] = []
+
+    @property
+    def event_emitter(self) -> EventEmitter:
+        """The runtime's event sink. Pass ``event_emitter=`` at init to
+        substitute a custom one (e.g. ``MultiEventEmitter`` for SSE +
+        log fan-out)."""
+        return self._emitter
 
     @property
     def backend(self) -> Backend:
@@ -163,6 +196,16 @@ class AgentRuntime:
             TimeoutMiddleware(self._options.timeout_seconds),
             DepthLimitMiddleware(self._options.max_spawn_depth),
         ]
+        if self._options.token_budget is not None:
+            # Pre-check + post-charge against the runtime-wide budget. Built
+            # per-spawn so the closure carries this run's emitter for the
+            # BUDGET_EXCEEDED emission.
+            stages.append(
+                CostTrackingMiddleware(
+                    self._options.token_budget,
+                    event_emitter=self._emitter,
+                )
+            )
         if self._options.retry_max_attempts > 1:
             stages.append(
                 RetryMiddleware(
@@ -202,6 +245,24 @@ class AgentRuntime:
             raise SpecValidationError("max_concurrency must be >= 1")
         resolved = self._resolve(agent)
 
+        from murmur.events.types import EventType, RuntimeEvent
+
+        # Use the first task's request_id as the batch's trace_id when
+        # available; otherwise fall back to the runtime_id (a batch with no
+        # tasks is rejected upstream by the empty-list short-circuit).
+        batch_trace_id = tasks[0].request_id if tasks else self._runtime_id
+        await self._emitter.emit(
+            RuntimeEvent(
+                event_type=EventType.BATCH_STARTED,
+                agent_name=resolved.name,
+                trace_id=batch_trace_id,
+                payload={
+                    "task_count": len(tasks),
+                    "max_concurrency": max_concurrency,
+                },
+            )
+        )
+
         backend_gather = getattr(self._backend, "gather", None)
         if callable(backend_gather):
             results = await backend_gather(
@@ -209,6 +270,20 @@ class AgentRuntime:
             )
         else:
             results = await self._fallback_gather(resolved, tasks, max_concurrency)
+
+        success_count = sum(1 for r in results if r.is_ok())
+        await self._emitter.emit(
+            RuntimeEvent(
+                event_type=EventType.BATCH_COMPLETED,
+                agent_name=resolved.name,
+                trace_id=batch_trace_id,
+                payload={
+                    "task_count": len(tasks),
+                    "success_count": success_count,
+                    "failure_count": len(results) - success_count,
+                },
+            )
+        )
 
         if fail_fast:
             for r in results:
@@ -295,12 +370,40 @@ class AgentRuntime:
         Returns the terminal agent's result. Failed slots in fan-out tiers
         are filtered before downstream mappers run; if every slot in a tier
         fails, raises :class:`murmur.core.errors.AllAgentsFailedError`.
+
+        Emits :data:`EventType.GROUP_STARTED` before traversal and
+        :data:`EventType.GROUP_COMPLETED` after the terminal result settles.
+        Per-agent events (``AGENT_SPAWNED``, ``AGENT_COMPLETED`` etc.) come
+        from each step's underlying :meth:`run` call.
         """
         # Imported lazily to keep ``murmur.groups`` optional-feeling and
         # avoid circular import at module load time.
+        from murmur.events.types import EventType, RuntimeEvent
         from murmur.groups.runner import run_group as _run_group
 
-        return await _run_group(self, group, task)
+        start = time.perf_counter()
+        await self._emitter.emit(
+            RuntimeEvent(
+                event_type=EventType.GROUP_STARTED,
+                agent_name=group.name,
+                task_id=task.id,
+                trace_id=task.request_id,
+                payload={"node_count": len(group.topology)},
+            )
+        )
+        try:
+            return await _run_group(self, group, task)
+        finally:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            await self._emitter.emit(
+                RuntimeEvent(
+                    event_type=EventType.GROUP_COMPLETED,
+                    agent_name=group.name,
+                    task_id=task.id,
+                    trace_id=task.request_id,
+                    payload={"duration_ms": duration_ms},
+                )
+            )
 
     # ------------------------------------------------------------------ helpers
 
@@ -310,8 +413,37 @@ class AgentRuntime:
                 raise RegistryError(
                     f"cannot resolve agent name {agent!r}: no registry configured"
                 )
-            return self._registry.get(agent)
-        return agent
+            resolved = self._registry.get(agent)
+        else:
+            resolved = agent
+        self._track_mcp_providers(resolved)
+        return resolved
+
+    def _track_mcp_providers(self, agent: Agent) -> None:
+        """Remember any MCP providers an agent brings so :meth:`shutdown`
+        can stop them later. Idempotent — duplicates are filtered."""
+        for provider in agent.mcp_servers:
+            if provider not in self._mcp_providers:
+                self._mcp_providers.append(provider)
+
+    async def shutdown(self) -> None:
+        """Release runtime-owned resources.
+
+        Calls ``stop()`` on every MCP toolset provider seen via :meth:`run`,
+        :meth:`gather`, or :meth:`run_group` — providers that were never
+        started ignore the call. Pre-warming is opt-in (call
+        ``await provider.start()`` yourself before the first run); the
+        default per-call lifecycle is managed by PydanticAI's MCPServer
+        and needs no shutdown hook.
+
+        Broker-mode runtimes additionally need ``await backend.stop()``;
+        :class:`AgentServer` / :class:`AgentRouter` already drive that
+        through their lifespan. ``shutdown`` is the dual for ad-hoc
+        scripts that pre-warmed providers via ``await provider.start()``.
+        """
+        for provider in self._mcp_providers:
+            with contextlib.suppress(Exception):
+                await provider.stop()
 
     def _build_backend(
         self,
@@ -319,12 +451,27 @@ class AgentRuntime:
         broker_url: str | None,
         broker_instance: Broker | None,
     ) -> Backend:
+        # JobBackend always receives the runtime's emitter so AGENT_DISPATCHED
+        # fires publisher-side on every broker dispatch — independent of the
+        # ``publish_events`` bridge. The bridge only governs whether
+        # worker-side events are *relayed back* over the broker.
         if broker_instance is not None:
-            return JobBackend(broker=broker_instance, runtime_id=self._runtime_id)
+            return JobBackend(
+                broker=broker_instance,
+                runtime_id=self._runtime_id,
+                publish_events=self._publish_events,
+                event_emitter=self._emitter,
+            )
         if broker_url is None:
+            if self._publish_events:
+                raise SpecValidationError(
+                    "publish_events=True requires a broker — pass broker= or "
+                    "broker_instance= to AgentRuntime, or drop publish_events"
+                )
             return ThreadBackend(
                 tool_registry=self._tool_registry,
                 tool_executor=self._tool_executor,
+                event_emitter=self._emitter,
             )
         scheme = urlparse(broker_url).scheme
         if scheme not in _KNOWN_SCHEMES:
@@ -334,7 +481,11 @@ class AgentRuntime:
             )
         broker = self._build_broker(scheme=scheme, url=broker_url)
         return JobBackend(
-            broker=broker, runtime_id=self._runtime_id, broker_url=broker_url
+            broker=broker,
+            runtime_id=self._runtime_id,
+            broker_url=broker_url,
+            publish_events=self._publish_events,
+            event_emitter=self._emitter,
         )
 
     @staticmethod

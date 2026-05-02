@@ -6,6 +6,7 @@ Protocols from :mod:`murmur.core.protocols`; concretes from this package.
 """
 
 from murmur.tools.executor import ToolExecutor
+from murmur.tools.mcp import mcp_http, mcp_sse, mcp_stdio
 from murmur.tools.registry import StaticToolProvider, ToolFunc, ToolRegistry
 
 __all__ = [
@@ -13,4 +14,7 @@ __all__ = [
     "ToolExecutor",
     "ToolFunc",
     "ToolRegistry",
+    "mcp_http",
+    "mcp_sse",
+    "mcp_stdio",
 ]

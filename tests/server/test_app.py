@@ -61,7 +61,7 @@ def _make_factory() -> Any:
         "echo": _Echo(text="ok").model_dump(),
     }
 
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         return pydantic_ai.Agent(
@@ -355,3 +355,113 @@ async def test_readyz_503_when_broker_not_started(echo_agent) -> None:
         r = await c.get("/readyz")
     assert r.status_code == 503
     assert r.json() == {"status": "broker_not_started"}
+
+
+# ---------------------------------------------------------------------------
+# zxn.3.1 — /events/stream firehose
+# ---------------------------------------------------------------------------
+
+
+def _build_server_with_sse(
+    echo_agent_arg: Agent,
+    *,
+    heartbeat_interval: float = 60.0,
+) -> tuple[AgentServer, Any]:
+    """Server with SSEEventEmitter wired into the runtime + as the firehose.
+
+    Returns the server plus the emitter so tests can ``emit`` directly to
+    drive subscriber output without exercising the full agent path.
+    Heartbeat defaults to 60 s so it doesn't race the test assertions;
+    the heartbeat-specific test passes its own short interval.
+    """
+    from murmur.events import LogEventEmitter, MultiEventEmitter, SSEEventEmitter
+
+    sse = SSEEventEmitter(heartbeat_interval=heartbeat_interval)
+    emitter = MultiEventEmitter([LogEventEmitter(), sse])
+    backend = ThreadBackend(event_emitter=emitter)
+    backend._build_pa_agent = _make_factory()
+    runtime = AgentRuntime(backend=backend, event_emitter=emitter)
+    server = AgentServer(runtime=runtime, sse_emitter=sse)
+    server.register(echo_agent_arg)
+    return server, sse
+
+
+async def test_events_stream_route_absent_when_emitter_not_passed(
+    echo_agent: Agent,
+) -> None:
+    backend = ThreadBackend()
+    backend._build_pa_agent = _make_factory()
+    runtime = AgentRuntime(backend=backend)
+    s = AgentServer(runtime=runtime)
+    s.register(echo_agent)
+    paths = {getattr(r, "path", None) for r in s.app.routes}
+    assert "/events/stream" not in paths
+
+
+async def test_events_stream_route_present_when_emitter_passed(
+    echo_agent: Agent,
+) -> None:
+    s, _sse = _build_server_with_sse(echo_agent)
+    paths = {getattr(r, "path", None) for r in s.app.routes}
+    assert "/events/stream" in paths
+
+
+async def test_events_stream_delivers_runtime_event_to_subscriber(
+    echo_agent: Agent,
+) -> None:
+    """The SSE generator yields the right ``event:`` + ``data:`` shape for
+    each :class:`RuntimeEvent` enqueued onto the underlying emitter.
+
+    Drives the emitter directly rather than through a full agent run —
+    that exercises a pile of unrelated machinery and the timing makes
+    the test flakier. The route's behaviour is just ``return
+    EventSourceResponse(emitter.subscribe())`` so verifying the
+    generator output covers the contract.
+    """
+    import asyncio
+    import json
+
+    from murmur.events import EventType, RuntimeEvent
+
+    s, sse = _build_server_with_sse(echo_agent)
+
+    # Subscribe registration only happens when the generator body runs,
+    # which is on the first ``__anext__`` — so we have to kick that off
+    # as a task before emit() so the queue exists when we publish.
+    sub = sse.subscribe()
+    next_task = asyncio.create_task(sub.__anext__())
+    # Yield once so the generator body registers the queue.
+    await asyncio.sleep(0)
+    await sse.emit(
+        RuntimeEvent(
+            event_type=EventType.AGENT_SPAWNED,
+            agent_name="echo",
+            trace_id="trace-events-1",
+            payload={"backend": "thread", "trust_level": "sandbox"},
+        )
+    )
+    frame = await asyncio.wait_for(next_task, timeout=1.0)
+    await sub.aclose()
+
+    assert frame["event"] == "agent_spawned"
+    decoded = json.loads(frame["data"])
+    assert decoded["agent_name"] == "echo"
+    assert decoded["trace_id"] == "trace-events-1"
+    assert decoded["event_type"] == "agent_spawned"
+
+
+async def test_events_stream_heartbeats_when_idle(echo_agent: Agent) -> None:
+    """An idle subscribe() generator emits ``event: ping`` between real
+    events so intermediate proxies don't reap the connection. Tests a
+    short heartbeat for speed."""
+    import asyncio
+
+    s, sse = _build_server_with_sse(echo_agent, heartbeat_interval=0.05)
+
+    sub = sse.subscribe()
+    try:
+        frame = await asyncio.wait_for(sub.__anext__(), timeout=1.0)
+    finally:
+        await sub.aclose()
+
+    assert frame == {"event": "ping", "data": ""}

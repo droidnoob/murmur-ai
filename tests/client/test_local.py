@@ -31,7 +31,7 @@ class _Echo(BaseModel):
 
 
 def _build_factory(canned: dict[str, Any]) -> Any:
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         return pydantic_ai.Agent(

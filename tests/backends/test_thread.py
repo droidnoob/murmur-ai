@@ -30,7 +30,7 @@ class _Out(BaseModel):
     text: str
 
 
-def _stub_pa_agent(
+async def _stub_pa_agent(
     agent: Agent,
     _allowed: frozenset[str],
     _task_id: str,
@@ -154,7 +154,7 @@ async def test_kill_is_idempotent(
 async def test_failed_run_yields_failed_result(echo_agent: Agent) -> None:
     backend = ThreadBackend()
 
-    def boom(
+    async def boom(
         _agent: Agent,
         _allowed: frozenset[str],
         _task_id: str,
@@ -313,7 +313,7 @@ async def test_gather_partial_failure_does_not_raise(echo_agent: Agent) -> None:
 
     call_count = {"n": 0}
 
-    def maybe_boom(
+    async def maybe_boom(
         agent: Agent,
         _allowed: frozenset[str],
         _task_id: str,

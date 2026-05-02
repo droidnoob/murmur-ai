@@ -135,28 +135,61 @@ class FastStreamBroker:
     # ------------------------------------------------------------------ helpers
 
     def _build_fs_broker(self) -> Any:
-        """Lazy-import the right FastStream broker class for ``self._scheme``."""
+        """Lazy-import the right FastStream broker class for ``self._scheme``.
+
+        Passes ``logger=None`` to every concrete to suppress FastStream's
+        own subscriber-registration / startup chatter — Murmur's worker
+        emits its own banner via :func:`murmur.worker.worker.Worker.start`
+        listing the agents and topics, so two flavours of the same
+        information would just be noise. Underlying-library loggers
+        (``aiokafka``, ``aio_pika``, ``redis``, ``nats``) get bumped to
+        ``WARNING`` separately in :func:`_quiet_underlying_loggers`.
+        """
+        _quiet_underlying_loggers()
         if self._scheme == "kafka":
             from faststream.kafka import KafkaBroker
 
             # ``KafkaBroker`` wants raw bootstrap servers, not a URL.
             servers = self._url.removeprefix("kafka://") or "localhost:9092"
-            return KafkaBroker(servers)
+            return KafkaBroker(servers, logger=None)
         if self._scheme == "nats":
             from faststream.nats import NatsBroker
 
-            return NatsBroker(self._url)
+            return NatsBroker(self._url, logger=None)
         if self._scheme == "amqp":
             from faststream.rabbit import RabbitBroker
 
-            return RabbitBroker(self._url)
+            return RabbitBroker(self._url, logger=None)
         if self._scheme == "redis":
             from faststream.redis import RedisBroker
 
-            return RedisBroker(self._url)
+            return RedisBroker(self._url, logger=None)
         raise SpecValidationError(  # pragma: no cover — caught in __init__
             f"no FastStream broker class wired for scheme {self._scheme!r}"
         )
+
+
+_QUIETED_LOGGERS = False
+
+
+def _quiet_underlying_loggers() -> None:
+    """Raise broker-lib loggers to WARNING so successful runs are silent.
+
+    ``aiokafka`` etc. log DNS / connection / consumer-group lifecycle at INFO
+    by default — useful for debugging, noisy in routine startup. Errors
+    (WARNING+) still surface. Idempotent: only adjusts levels once per
+    process so user-overridden levels don't get fought over.
+    """
+    global _QUIETED_LOGGERS
+    if _QUIETED_LOGGERS:
+        return
+    import logging
+
+    for name in ("aiokafka", "aio_pika", "redis", "nats", "faststream"):
+        logger = logging.getLogger(name)
+        if logger.level < logging.WARNING:
+            logger.setLevel(logging.WARNING)
+    _QUIETED_LOGGERS = True
 
 
 def _wrap_handler(handler: MessageHandler) -> Any:

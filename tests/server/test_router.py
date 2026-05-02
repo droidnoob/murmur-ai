@@ -42,7 +42,7 @@ class _Echo(BaseModel):
 def _make_factory() -> Any:
     canned = {"echo": _Echo(text="ok").model_dump()}
 
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         return pydantic_ai.Agent(

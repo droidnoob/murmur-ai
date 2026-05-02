@@ -25,7 +25,7 @@ import structlog.contextvars
 
 from murmur.core.errors import SpecValidationError
 from murmur.core.protocols.worker import OnComplete, OnError, OnStart
-from murmur.messages import ResultMessage, TaskMessage, task_topic
+from murmur.messages import ResultMessage, TaskMessage, result_topic, task_topic
 
 if TYPE_CHECKING:
     from murmur.agent import Agent
@@ -55,13 +55,33 @@ class Worker:
         if prefetch < 1:
             raise SpecValidationError("prefetch must be >= 1")
 
+        from murmur.events.broker import BrokerEventBridge
+        from murmur.events.log import LogEventEmitter
+        from murmur.events.multi import MultiEventEmitter
         from murmur.runtime import AgentRuntime as _AgentRuntime
 
         self._broker = broker
         self._agents: dict[str, Agent] = dict(agents)
         # NB: the worker's runtime MUST be ThreadBackend-backed. Passing a
         # broker-backed runtime here re-publishes tasks → infinite loop.
-        self._runtime: AgentRuntime = runtime or _AgentRuntime()
+        #
+        # When constructing our own runtime, we wire the distributed event
+        # bridge into its emitter chain so per-agent / per-tool events
+        # fire BOTH locally (to structlog via LogEventEmitter) AND, when
+        # a TaskMessage carries an ``events_topic``, onto the broker for
+        # the publisher to relay through its own emitter. The bridge is
+        # contextvar-driven — no-op when no topic is bound — so installing
+        # it has zero cost when distributed observability isn't used.
+        #
+        # Users supplying their own runtime keep full control of their
+        # emitter chain; document the workaround (wrap their emitter in
+        # a Multi with BrokerEventBridge themselves) in docstrings.
+        if runtime is None:
+            bridge = BrokerEventBridge(broker)
+            runtime = _AgentRuntime(
+                event_emitter=MultiEventEmitter([LogEventEmitter(), bridge])
+            )
+        self._runtime: AgentRuntime = runtime
         self._concurrency = concurrency
         self._prefetch = prefetch
         self._semaphore = asyncio.Semaphore(concurrency)
@@ -89,18 +109,38 @@ class Worker:
     # ------------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
-        """Begin consuming tasks. Subscribes ``broker`` to each agent's topic."""
+        """Begin consuming tasks. Subscribes ``broker`` to each agent's topic.
+
+        Emits a Murmur-branded startup banner (multi-line, written to
+        stderr) plus a structured ``worker_started`` event that includes
+        the per-agent task topics, broker scheme + URL, and concurrency.
+        FastStream's own subscriber chatter is silenced upstream in
+        :class:`murmur.backends.FastStreamBroker`.
+        """
         if self._started:
             return
         await self._broker.start()
+        subscriptions: dict[str, str] = {}
         for agent_name in self._agents:
-            await self._broker.subscribe(
-                task_topic(agent_name), self._make_handler(agent_name)
-            )
+            topic = task_topic(agent_name)
+            await self._broker.subscribe(topic, self._make_handler(agent_name))
+            subscriptions[agent_name] = topic
         self._started = True
+
+        broker_repr = _broker_repr(self._broker)
+        runtime_id = self._runtime.runtime_id
+        _print_banner(
+            broker=broker_repr,
+            runtime_id=runtime_id,
+            subscriptions=subscriptions,
+            concurrency=self._concurrency,
+        )
         await log.ainfo(
             "worker_started",
             agents=list(self._agents.keys()),
+            subscriptions=subscriptions,
+            results_topic=result_topic(runtime_id),
+            broker=broker_repr,
             concurrency=self._concurrency,
         )
 
@@ -135,6 +175,8 @@ class Worker:
         return handler
 
     async def _run_one(self, agent_name: str, msg: TaskMessage) -> None:
+        from murmur.events.broker import bind_event_topic, reset_event_topic
+
         agent = self._agents[agent_name]
         structlog.contextvars.bind_contextvars(
             request_id=msg.request_id,
@@ -142,6 +184,11 @@ class Worker:
             task_id=msg.task_id,
             agent_name=agent_name,
         )
+        # Bind the per-task event-relay target so any BrokerEventBridge in
+        # the runtime's emitter chain forwards events to the publisher's
+        # events topic. No-op when ``events_topic`` is None — the bridge
+        # already early-returns when the contextvar is unset.
+        events_token = bind_event_topic(msg.events_topic)
         async with self._semaphore:
             start = time.perf_counter()
             response: ResultMessage
@@ -196,7 +243,60 @@ class Worker:
                 structlog.contextvars.unbind_contextvars(
                     "request_id", "batch_id", "task_id", "agent_name"
                 )
+                reset_event_topic(events_token)
         await self._broker.publish(msg.reply_to, response.model_dump_json().encode())
+
+
+def _broker_repr(broker: Broker) -> str:
+    """Best-effort human-readable broker description for the banner.
+
+    :class:`FastStreamBroker` exposes ``scheme`` + ``url`` so we render
+    the original URL the user passed. The in-memory broker has neither;
+    we render ``memory://`` to match the URL scheme that constructs it.
+    """
+    scheme = getattr(broker, "scheme", None)
+    url = getattr(broker, "url", None)
+    if scheme and url:
+        return url if url.startswith(f"{scheme}://") else f"{scheme}://{url}"
+    if url:
+        return str(url)
+    if broker.__class__.__name__ == "InMemoryBroker":
+        return "memory://"
+    return broker.__class__.__name__
+
+
+def _print_banner(
+    *,
+    broker: str,
+    runtime_id: str,
+    subscriptions: Mapping[str, str],
+    concurrency: int,
+) -> None:
+    """Write a multi-line Murmur banner to stderr.
+
+    Mirrors the visual weight of the startup output other broker frameworks
+    (FastStream, Celery) produce. Goes through ``sys.stderr`` directly
+    rather than ``structlog`` so the structure stays multi-line / scannable
+    instead of being collapsed into one log line.
+    """
+    import sys
+
+    name_width = max((len(n) for n in subscriptions), default=0)
+    lines = [
+        "",
+        "  ╭─ Murmur worker ─────────────────────────────────────────────",
+        f"  │  broker      : {broker}",
+        f"  │  runtime     : {runtime_id}",
+        f"  │  concurrency : {concurrency}",
+        f"  │  agents      : {len(subscriptions)}",
+        "  │  subscriptions:",
+    ]
+    for agent_name, topic in subscriptions.items():
+        lines.append(f"  │    · {agent_name:<{name_width}}  →  {topic}")
+    lines.append("  ╰─────────────────────────────────────────────────────────────")
+    lines.append("")
+    sys.stderr.write("\n".join(lines))
+    sys.stderr.flush()
 
 
 __all__ = ["Worker"]

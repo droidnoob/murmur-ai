@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from murmur.agent import Agent
+    from murmur.events.sse import SSEEventEmitter
     from murmur.groups.spec import AgentGroup
     from murmur.runs import RunStore
     from murmur.runtime import AgentRuntime
@@ -93,6 +94,7 @@ class AgentServer:
         runtime: AgentRuntime | None = None,
         run_store: RunStore | None = None,
         drain_timeout: float = 30.0,
+        sse_emitter: SSEEventEmitter | None = None,
     ) -> None:
         from murmur.runtime import AgentRuntime as _AgentRuntime
 
@@ -101,6 +103,14 @@ class AgentServer:
         self._agents: dict[str, Agent] = {}
         self._groups: dict[str, AgentGroup] = {}
         self._drain_timeout = drain_timeout
+        # When set, the server adds a ``GET /events/stream`` route streaming
+        # every :class:`RuntimeEvent` enqueued onto the emitter to connected
+        # SSE subscribers. The caller is responsible for wiring this same
+        # emitter into ``runtime.event_emitter`` (typically via
+        # :class:`MultiEventEmitter`) so events actually land here. Left
+        # ``None`` to opt out — embedded mounts that don't want a public
+        # event firehose just leave this off.
+        self._sse_emitter: SSEEventEmitter | None = sse_emitter
         self._active_runs: set[str] = set()
         self._shutting_down: bool = False
         self._app: FastAPI = self._build_app()
@@ -364,6 +374,25 @@ class AgentServer:
                     yield {"event": ev.type.value, "data": ev.model_dump_json()}
 
             return EventSourceResponse(_gen())
+
+        # ---------- runtime event firehose (zxn.3.1) ----------
+
+        if self._sse_emitter is not None:
+            sse_emitter = self._sse_emitter
+
+            @router.get("/events/stream")
+            async def stream_events() -> EventSourceResponse:
+                """Live :class:`RuntimeEvent` firehose for connected dashboards.
+
+                One subscriber == one bounded in-memory queue. Slow consumers
+                drop events at the emitter rather than backpressuring the
+                runtime; closing the connection cleanly removes the queue.
+                Pair with ``AgentRuntime(broker="…", publish_events=True)``
+                to also receive worker-side events from a broker fleet.
+                """
+                return EventSourceResponse(sse_emitter.subscribe())
+
+            _ = stream_events  # decorator does the wiring
 
         @router.post("/runs/{run_id}/cancel")
         async def cancel_run(run_id: str) -> dict[str, str]:

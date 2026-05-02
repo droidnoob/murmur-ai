@@ -36,7 +36,7 @@ from pydantic import BaseModel
 from murmur.backends._collector import ResultCollector
 from murmur.core.errors import SpawnError
 from murmur.core.protocols.backend import BackendStatus
-from murmur.messages import ResultMessage, TaskMessage, task_topic
+from murmur.messages import ResultMessage, TaskMessage, events_topic, task_topic
 from murmur.types import (
     AgentContext,
     AgentHandle,
@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 
     from murmur.agent import Agent
     from murmur.core.protocols.broker import Broker
+    from murmur.core.protocols.events import EventEmitter
 
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
@@ -67,6 +68,8 @@ class JobBackend:
         runtime_id: str | None = None,
         broker_url: str | None = None,
         default_timeout: float | None = None,
+        publish_events: bool = False,
+        event_emitter: EventEmitter | None = None,
     ) -> None:
         self._broker = broker
         self._runtime_id: str = runtime_id or str(uuid.uuid4())
@@ -76,6 +79,20 @@ class JobBackend:
         self._cache: dict[str, AgentResult[BaseModel]] = {}
         self._handles: dict[str, tuple[Agent, TaskSpec]] = {}
         self._started: bool = False
+        self._publish_events: bool = publish_events
+        # ``event_emitter`` is what we forward bridged events into. The
+        # runtime passes its own emitter down so per-agent / per-tool
+        # events fired on the worker side land in the publisher's local
+        # observability stack alongside batch / group events. Optional
+        # because tests construct ``JobBackend`` directly without a
+        # runtime above it; ``publish_events=True`` without an emitter
+        # is a programming error and we reject it eagerly.
+        if publish_events and event_emitter is None:
+            raise SpawnError(
+                "JobBackend(publish_events=True) requires event_emitter= "
+                "so received events have somewhere to land"
+            )
+        self._event_emitter: EventEmitter | None = event_emitter
 
     @property
     def runtime_id(self) -> str:
@@ -104,16 +121,30 @@ class JobBackend:
         """
         return self._broker
 
+    @property
+    def publish_events(self) -> bool:
+        """Whether worker-side runtime events are bridged back to this
+        runtime's local emitter via ``murmur.events.{runtime_id}``."""
+        return self._publish_events
+
     async def start(self) -> None:
         """Connect the broker and register the reply-topic subscription.
 
         Idempotent. ``AgentRuntime`` calls this lazily on first ``run`` /
         ``gather``; users never need to call it explicitly.
+
+        When ``publish_events=True`` was passed at construction, also
+        subscribes to the per-runtime events topic so worker-side
+        :class:`RuntimeEvent` envelopes land in the local emitter.
         """
         if self._started:
             return
         await self._broker.start()
         await self._collector.start()
+        if self._publish_events:
+            await self._broker.subscribe(
+                events_topic(self._runtime_id), self._on_event_message
+            )
         self._started = True
 
     async def stop(self) -> None:
@@ -139,6 +170,7 @@ class JobBackend:
             reply_to=self._collector.reply_topic,
             request_id=task.request_id,
             task=task,
+            events_topic=self._events_topic_for_publish(),
         )
         await log.ainfo(
             "agent_spawned",
@@ -148,6 +180,7 @@ class JobBackend:
             backend=self.name,
             trust_level=agent.trust_level.value,
         )
+        await self._emit_dispatched(agent=agent, task=task)
         await self._broker.publish(
             task_topic(agent.name), msg.model_dump_json().encode()
         )
@@ -224,6 +257,7 @@ class JobBackend:
         self._collector.register(batch_id, expected=len(tasks))
 
         topic = task_topic(agent.name)
+        bridge_topic = self._events_topic_for_publish()
         for index, task in enumerate(tasks):
             msg = TaskMessage(
                 batch_id=batch_id,
@@ -231,7 +265,9 @@ class JobBackend:
                 reply_to=self._collector.reply_topic,
                 request_id=task.request_id,
                 task=task,
+                events_topic=bridge_topic,
             )
+            await self._emit_dispatched(agent=agent, task=task)
             await self._broker.publish(topic, msg.model_dump_json().encode())
 
         slots = await self._collector.gather_batch(
@@ -242,6 +278,70 @@ class JobBackend:
             _msg_to_result(slots[i], agent=agent, user_task_id=tasks[i].id)
             for i in range(len(tasks))
         ]
+
+    # ------------------------------------------------------------------ events
+
+    def _events_topic_for_publish(self) -> str | None:
+        """The topic the worker should relay events onto for tasks
+        published by *this* backend, or ``None`` when the bridge is off.
+        """
+        return events_topic(self._runtime_id) if self._publish_events else None
+
+    async def _emit_dispatched(self, *, agent: Agent, task: TaskSpec) -> None:
+        """Fire the publisher-side AGENT_DISPATCHED event.
+
+        Always emitted on broker dispatch — independent of
+        ``publish_events``. ThreadBackend has no equivalent because its
+        AGENT_SPAWNED event already happens publisher-side; for the
+        broker path the spawn doesn't fire until the worker picks the
+        message up, which can be seconds away. AGENT_DISPATCHED gives
+        callers immediate "task accepted" visibility.
+        """
+        if self._event_emitter is None:
+            return
+        from murmur.events.types import EventType, RuntimeEvent
+
+        broker_label = self._broker_url
+        if broker_label is None:
+            scheme = getattr(self._broker, "scheme", None)
+            url = getattr(self._broker, "url", None)
+            broker_label = url or scheme
+        await self._event_emitter.emit(
+            RuntimeEvent(
+                event_type=EventType.AGENT_DISPATCHED,
+                agent_name=agent.name,
+                task_id=task.id,
+                trace_id=task.request_id,
+                payload={
+                    "backend": self.name,
+                    "broker": broker_label,
+                    "trust_level": agent.trust_level.value,
+                },
+            )
+        )
+
+    async def _on_event_message(self, payload: bytes) -> None:
+        """Forward a wire :class:`RuntimeEvent` into the local emitter.
+
+        Subscribed only when ``publish_events=True`` (see :meth:`start`).
+        Decode failures and emitter exceptions are swallowed —
+        observability never takes the runtime down. Without an emitter
+        we early-return; ``__init__`` rejects the misconfiguration so
+        this guard is defence-in-depth.
+        """
+        if self._event_emitter is None:  # pragma: no cover — guarded by __init__
+            return
+        from murmur.events.types import RuntimeEvent
+
+        try:
+            event = RuntimeEvent.model_validate_json(payload)
+        except Exception as exc:
+            await log.aerror("event_bridge_decode_failed", error=str(exc))
+            return
+        try:
+            await self._event_emitter.emit(event)
+        except Exception as exc:  # pragma: no cover — emitter contract is no-raise
+            await log.aerror("event_bridge_emit_failed", error=str(exc))
 
 
 def _msg_to_result(

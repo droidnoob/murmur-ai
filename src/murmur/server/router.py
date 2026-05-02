@@ -43,6 +43,7 @@ from murmur.server.errors import error_to_response, status_for
 
 if TYPE_CHECKING:
     from murmur.agent import Agent
+    from murmur.events.sse import SSEEventEmitter
     from murmur.groups.spec import AgentGroup
     from murmur.runs import RunStore
     from murmur.runtime import AgentRuntime
@@ -74,17 +75,24 @@ class AgentRouter(APIRouter):
         worker_concurrency: int = 10,
         prefix: str = "",
         tags: list[str] | None = None,
+        sse_emitter: SSEEventEmitter | None = None,
     ) -> None:
         if server is not None and (runtime is not None or run_store is not None):
             raise ValueError(
                 "pass either `server=` or "
                 "(`runtime=`/`run_store=`/`drain_timeout=`) — not both"
             )
+        if server is not None and sse_emitter is not None:
+            raise ValueError(
+                "`sse_emitter=` is for the router-built server; pass it on the "
+                "AgentServer you constructed via `server=` instead"
+            )
 
         self._server: AgentServer = server or AgentServer(
             runtime=runtime,
             run_store=run_store,
             drain_timeout=drain_timeout,
+            sse_emitter=sse_emitter,
         )
         self._start_workers = start_workers
         # The worker's runtime MUST be thread-mode — broker-mode would
@@ -229,13 +237,15 @@ FastStreamBroker` (the ``_fs_broker=`` constructor seam).
         )
 
     async def _lifespan_shutdown(self) -> None:
-        """Stop the worker, drain the server, then stop the broker.
+        """Stop the worker, drain the server, stop the broker, release MCP.
 
         Order matters: stopping the worker first (which drains its in-flight
         tasks) avoids a race where the broker disconnects under it. Drain
         then runs through any /submit-spawned background runs the server
         started. Stopping the broker last ensures any final result publishes
-        from the worker actually land.
+        from the worker actually land. ``runtime.shutdown()`` releases any
+        MCP toolset providers that were pre-warmed by user code; same call
+        on the worker runtime in case agents there registered providers.
         """
         from murmur.backends.job import JobBackend
 
@@ -248,6 +258,13 @@ FastStreamBroker` (the ``_fs_broker=`` constructor seam).
         backend = self._server.runtime.backend
         if isinstance(backend, JobBackend):
             await backend.stop()
+
+        await self._server.runtime.shutdown()
+        if (
+            self._worker_runtime is not None
+            and self._worker_runtime is not self._server.runtime
+        ):
+            await self._worker_runtime.shutdown()
 
     # ------------------------------------------------------------------ handlers
 

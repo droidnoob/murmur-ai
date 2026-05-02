@@ -34,7 +34,7 @@ class _Echo(BaseModel):
 def server() -> AgentServer:
     backend = ThreadBackend()
 
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         return pydantic_ai.Agent(

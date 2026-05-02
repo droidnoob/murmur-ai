@@ -117,7 +117,7 @@ def _make_canned_pa_factory(
         "research-summary": final_report.model_dump(),
     }
 
-    def build_pa_agent(
+    async def build_pa_agent(
         agent: Agent,
         _allowed: frozenset[str],
         _task_id: str,

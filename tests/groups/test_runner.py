@@ -90,7 +90,7 @@ def _make_canned_factory() -> Any:
         "research-summary": _final().model_dump(),
     }
 
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         canned = by_agent.get(agent.name)
@@ -108,7 +108,7 @@ def _make_canned_factory() -> Any:
 def _make_failing_minion_factory() -> Any:
     """Minion always fails; head + summary succeed."""
 
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         if agent.name == "research-minion":
@@ -523,7 +523,7 @@ async def test_all_branches_skipped_raises(
 def _multi_input_factory(canned: dict[str, Any]) -> Any:
     """Per-agent canned outputs; raises if an agent isn't in the table."""
 
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         out = canned.get(agent.name)
@@ -632,7 +632,7 @@ async def test_multi_input_one_upstream_dead_mapper_sees_empty_list(
 ) -> None:
     """If one upstream fully fails, the mapper still runs with [] for that key."""
 
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         if agent.name == auditor_agent.name:
@@ -688,7 +688,7 @@ async def test_multi_input_all_upstreams_dead_raises(
 ) -> None:
     """All upstreams dead → AllAgentsFailedError, aggregator never called."""
 
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         if agent.name in {minion_agent.name, auditor_agent.name}:

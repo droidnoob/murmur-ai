@@ -46,6 +46,16 @@ class TaskMessage(BaseModel):
     task: TaskSpec
     """The actual unit of work."""
 
+    events_topic: str | None = None
+    """Optional topic the worker should relay :class:`RuntimeEvent`
+    envelopes onto for the duration of this task.
+
+    Set by the publisher-side :class:`JobBackend` when constructed with
+    ``publish_events=True`` so per-agent / per-tool events fire on the
+    publisher's local emitter alongside the worker's. Defaults to
+    ``None`` — log-aggregation pipelines (Datadog/Loki) cover the common
+    case without doubling broker load."""
+
 
 class ResultMessage(BaseModel):
     """Envelope published onto a reply topic; consumed by the runtime.
@@ -93,9 +103,24 @@ def result_topic(runtime_id: str) -> str:
     return f"murmur.results.{runtime_id}"
 
 
+def events_topic(runtime_id: str) -> str:
+    """Topic the distributed event bridge publishes :class:`RuntimeEvent`
+    envelopes onto for one publisher runtime.
+
+    Per-publisher namespacing matches :func:`result_topic` — concurrent
+    runtimes never cross-contaminate event traffic. The publisher
+    subscribes here on :meth:`JobBackend.start` (when
+    ``publish_events=True``) and forwards each decoded event to its
+    local emitter; workers publish here when a task's
+    :attr:`TaskMessage.events_topic` instructs them to.
+    """
+    return f"murmur.events.{runtime_id}"
+
+
 __all__ = [
     "ResultMessage",
     "TaskMessage",
+    "events_topic",
     "result_topic",
     "task_topic",
 ]

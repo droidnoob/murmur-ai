@@ -1,0 +1,213 @@
+"""``murmur serve`` — standalone HTTP server for registered agents + events.
+
+Boots an :class:`murmur.server.AgentServer` over a YAML-discovered set of
+agents, optionally connected to a broker. Adds a live ``GET /events/stream``
+firehose by wiring a :class:`SSEEventEmitter` into the runtime's emitter
+chain (paired with :class:`LogEventEmitter` via :class:`MultiEventEmitter`
+so structured logs keep flowing alongside).
+
+CLI shape::
+
+    murmur serve --specs ./specs                                    # local thread-mode
+    murmur serve --specs ./specs --broker kafka://host:9092         # broker dispatch
+    murmur serve --specs ./specs --broker kafka://… --publish-events
+                                                                    # also receive
+                                                                    # worker-side
+                                                                    # events through
+                                                                    # the bridge
+
+``--publish-events`` requires ``--broker`` — without a broker there's no
+fleet to receive events from. ``--specs`` defaults to ``./specs`` to match
+``murmur worker start``; ``--all-from`` mirrors the worker's bulk-discovery
+flag so a single command can register every YAML-defined agent.
+
+Pairs with ``zxn.3.2`` (``murmur status``) — that command is the SSE
+consumer side of this firehose.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import structlog
+
+from murmur.core.errors import RegistryError, SpecValidationError
+from murmur.registry.yaml import YamlRegistry
+
+if TYPE_CHECKING:
+    from murmur.agent import Agent
+
+log: structlog.stdlib.BoundLogger = structlog.get_logger()
+
+
+def register_serve(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("serve", help="Run the Murmur HTTP server with live event SSE.")
+    selection = p.add_mutually_exclusive_group()
+    selection.add_argument(
+        "--agents",
+        help=(
+            "Comma-separated agent names to expose. Default: every agent under --specs."
+        ),
+    )
+    selection.add_argument(
+        "--all-from",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "Discover every agent under the given specs root and "
+            "register all of them. Mutually exclusive with --agents."
+        ),
+    )
+    p.add_argument(
+        "--specs",
+        type=Path,
+        default=Path("./specs"),
+        help="Directory containing YAML agent specs (default: ./specs).",
+    )
+    p.add_argument(
+        "--broker",
+        default=None,
+        help=(
+            "Broker URL (kafka://host:port, nats://, amqp://, redis://, or "
+            "memory://). Omit to run in thread-mode — no distributed dispatch."
+        ),
+    )
+    p.add_argument(
+        "--publish-events",
+        action="store_true",
+        help=(
+            "Subscribe to the per-runtime broker events topic and surface "
+            "worker-side RuntimeEvents through GET /events/stream. Requires "
+            "--broker."
+        ),
+    )
+    p.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0).")
+    p.add_argument("--port", type=int, default=8420, help="Bind port (default: 8420).")
+    p.add_argument(
+        "--heartbeat-interval",
+        type=float,
+        default=15.0,
+        help=(
+            "SSE keepalive interval in seconds (default: 15). Lower values "
+            "tolerate aggressive proxy idle timeouts."
+        ),
+    )
+    p.add_argument(
+        "--no-events",
+        action="store_true",
+        help="Disable the GET /events/stream endpoint entirely.",
+    )
+    p.set_defaults(handler=_start)
+
+
+def _start(args: argparse.Namespace) -> int:
+    return asyncio.run(_run_serve(args))
+
+
+async def _run_serve(args: argparse.Namespace) -> int:
+    if args.publish_events and not args.broker:
+        print(
+            "[error] --publish-events requires --broker (no fleet without a broker)",
+            file=sys.stderr,
+        )
+        return 2
+
+    specs_root: Path = args.all_from if args.all_from is not None else args.specs
+
+    try:
+        registry = YamlRegistry(specs_root)
+    except RegistryError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 2
+
+    errors = registry.validate()
+    if errors:
+        for err in errors:
+            print(f"[error] {err}", file=sys.stderr)
+        return 1
+
+    agents = _resolve_agents(args, registry)
+    if agents is None:
+        return 2
+
+    # Lazy imports — keep `murmur run` / `murmur validate` startup lean and
+    # avoid pulling FastAPI / uvicorn / sse-starlette in for every CLI use.
+    from murmur.events import LogEventEmitter, MultiEventEmitter, SSEEventEmitter
+    from murmur.runtime import AgentRuntime
+    from murmur.server.app import AgentServer
+
+    sse_emitter: SSEEventEmitter | None = None
+    if not args.no_events:
+        sse_emitter = SSEEventEmitter(heartbeat_interval=args.heartbeat_interval)
+        emitter = MultiEventEmitter([LogEventEmitter(), sse_emitter])
+    else:
+        emitter = MultiEventEmitter([LogEventEmitter()])
+
+    try:
+        runtime = AgentRuntime(
+            broker=args.broker,
+            event_emitter=emitter,
+            publish_events=args.publish_events,
+        )
+    except SpecValidationError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 2
+
+    server = AgentServer(runtime=runtime, sse_emitter=sse_emitter)
+    for agent in agents.values():
+        server.register(agent)
+
+    await log.ainfo(
+        "serve_starting",
+        host=args.host,
+        port=args.port,
+        broker=args.broker,
+        publish_events=args.publish_events,
+        agents=sorted(agents),
+        events_endpoint=("/events/stream" if sse_emitter is not None else None),
+    )
+    await server.serve(host=args.host, port=args.port)
+    return 0
+
+
+def _resolve_agents(
+    args: argparse.Namespace, registry: YamlRegistry
+) -> dict[str, Agent] | None:
+    """Pick the agent set to register. Same flag semantics as ``worker start``.
+
+    Returns ``None`` (after printing to stderr) on misconfiguration so the
+    caller can return the right exit code.
+    """
+    if args.all_from is not None:
+        names = sorted(registry.list())
+        if not names:
+            print(f"[error] no agents found under {args.all_from}", file=sys.stderr)
+            return None
+    elif args.agents is not None:
+        # Explicit ``--agents`` (even empty string) takes the explicit
+        # branch — passing it should never silently fall through to
+        # "register everything" or we'd boot a server with surprise
+        # endpoints.
+        names = [n.strip() for n in args.agents.split(",") if n.strip()]
+        if not names:
+            print("[error] --agents is empty", file=sys.stderr)
+            return None
+    else:
+        # No flag → register every agent under --specs.
+        names = sorted(registry.list())
+        if not names:
+            print(f"[error] no agents found under {args.specs}", file=sys.stderr)
+            return None
+
+    try:
+        return {name: registry.get(name) for name in names}
+    except RegistryError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return None
+
+
+__all__ = ["register_serve"]

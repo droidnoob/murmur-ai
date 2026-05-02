@@ -11,11 +11,25 @@ in this module.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 from murmur.core.errors import RegistryError
 
-ToolFunc = Callable[..., Awaitable[object]]
-"""Concrete tool callables registered against a name."""
+T = TypeVar("T")
+
+ToolFunc = Callable[..., Awaitable[T]]
+"""Tool callable parameterised by its result type.
+
+Use bare ``ToolFunc`` (or explicitly ``ToolFunc[Any]``) when you don't care
+about the result type — the registry stores tools heterogeneously and
+returns ``ToolFunc[Any]``. Use ``ToolFunc[MyType]`` in user code to keep the
+return-type information visible to type checkers when the caller knows the
+shape of the tool's output.
+
+>>> async def web_search(query: str) -> str: ...
+>>> typed: ToolFunc[str] = web_search        # ty narrows to ``Awaitable[str]``
+>>> registry.register("web_search", typed)   # registry erases T to Any
+"""
 
 
 class StaticToolProvider:
@@ -36,14 +50,26 @@ class ToolRegistry:
     """In-memory map of tool name → callable. Not a pluggable; data store only."""
 
     def __init__(self) -> None:
-        self._tools: dict[str, ToolFunc] = {}
+        # ``Any`` here is genuinely correct, not a workaround: the registry is
+        # heterogeneous by design (one slot holds ``ToolFunc[str]``, the next
+        # ``ToolFunc[MyModel]``). There's no single ``T`` that fits the dict.
+        self._tools: dict[str, ToolFunc[Any]] = {}
 
-    def register(self, name: str, func: ToolFunc) -> None:
+    def register(self, name: str, func: ToolFunc[T]) -> None:
+        """Register a tool under ``name``, preserving its return type at the call site.
+
+        The method is generic over ``T`` so a caller passing ``ToolFunc[str]``
+        keeps the typed view in their own code. The registry erases ``T`` to
+        ``Any`` on storage (see ``__init__``); retrieval via :meth:`get`
+        returns ``ToolFunc[Any]`` because no caller can know the original
+        ``T`` at lookup time.
+        """
         if name in self._tools:
             raise RegistryError(f"tool '{name}' is already registered")
         self._tools[name] = func
 
-    def get(self, name: str) -> ToolFunc:
+    def get(self, name: str) -> ToolFunc[Any]:
+        # ``Any`` because the registry forgets ``T`` on storage — see ``__init__``.
         try:
             return self._tools[name]
         except KeyError as exc:

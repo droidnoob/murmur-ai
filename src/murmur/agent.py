@@ -18,13 +18,14 @@ declares the hooks against a typed ``input_type`` / ``output_type``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from murmur.context.null import NullContextPasser
 from murmur.core.protocols.context import ContextPasser
+from murmur.core.protocols.toolsets import ToolsetProvider
 from murmur.types import TrustLevel
 
 ProcessHook = Callable[..., Any]
@@ -56,6 +57,38 @@ class Agent(BaseModel):
     """Optional structured input type. ``None`` = the agent takes a plain string."""
 
     tools: frozenset[str] = Field(default_factory=frozenset)
+
+    mcp_servers: tuple[ToolsetProvider, ...] = ()
+    """Remote toolset providers — tools discovered at dispatch time.
+
+    Each provider's tools are exposed to the agent alongside its native
+    ``tools=…`` set. Calls flow through the same :class:`ToolExecutor`
+    gate, so trust gating and lifecycle events apply identically. Build
+    via :func:`murmur.tools.mcp_stdio` / :func:`murmur.tools.mcp_http` /
+    :func:`murmur.tools.mcp_sse`.
+
+    The runtime owns provider lifecycle — it calls ``start()`` lazily on
+    first dispatch and ``stop()`` on shutdown.
+    """
+
+    model_settings: Mapping[str, object] | None = None
+    """Per-provider knobs forwarded to the underlying model — temperature,
+    max_tokens, top_p, etc.
+
+    The map is passed through to ``pydantic_ai.Agent(model_settings=...)``
+    verbatim. Recognised keys are provider-specific (PydanticAI validates
+    per-provider at request time); a typo is a silent no-op rather than
+    a Murmur error. Common keys:
+
+    - ``temperature: float``
+    - ``max_tokens: int``
+    - ``top_p: float``
+    - ``stop_sequences: list[str]``
+    - ``timeout: float`` — per-request, distinct from
+      ``RuntimeOptions.timeout_seconds`` which gates the whole agent run
+
+    ``None`` (default) means PydanticAI picks per-provider defaults.
+    """
 
     trust_level: TrustLevel = TrustLevel.MEDIUM
     context_passer: ContextPasser = Field(default_factory=NullContextPasser)

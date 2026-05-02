@@ -74,7 +74,7 @@ class _Out(BaseModel):
 
 
 def _stub_pa_factory() -> Any:
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         return pydantic_ai.Agent(

@@ -83,7 +83,7 @@ def _make_canned_factory() -> Any:
         ).model_dump(),
     }
 
-    def build(
+    async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str
     ) -> pydantic_ai.Agent[None, Any]:
         canned = by_agent[agent.name]
