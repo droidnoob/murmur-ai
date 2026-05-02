@@ -1,8 +1,46 @@
 # Models
 
-Concurrency-limit primitives for capping provider-side HTTP requests.
-Re-exported from PydanticAI under `murmur.models` so user code never
-imports `pydantic_ai` directly (Public API Rule).
+Re-exports from PydanticAI under `murmur.models` so user code never imports
+`pydantic_ai` directly (Public API Rule). Two unrelated families live here:
+**Model classes** (one per LLM vendor — pass to `Agent.model` for non-default
+Provider / endpoint / HTTP client configuration) and **concurrency
+primitives** (cap provider-side HTTP request concurrency).
+
+## Model classes
+
+| Class | Vendor |
+|---|---|
+| `AnthropicModel` | Anthropic |
+| `BedrockConverseModel` | AWS Bedrock |
+| `CerebrasModel` | Cerebras |
+| `CohereModel` | Cohere |
+| `GoogleModel` | Gemini (Google AI Studio / Vertex) |
+| `GroqModel` | Groq |
+| `HuggingFaceModel` | HuggingFace Inference Providers |
+| `MistralModel` | Mistral |
+| `OllamaModel` | Ollama |
+| `OpenAIChatModel` | OpenAI Chat Completions API (and OpenAI-compatible endpoints) |
+| `OpenAIResponsesModel` | OpenAI Responses API |
+| `OpenRouterModel` | OpenRouter |
+| `XaiModel` | xAI (Grok) |
+| `FallbackModel` | Wraps several models for automatic failover (Murmur builds this for you when you set `Agent.fallback_models=`) |
+| `Model` | Abstract base class — useful for type-annotating user code that holds a model of any kind |
+
+Pair a Model with the matching [Provider](providers.md) when you need
+non-default authentication, an alternative endpoint, or a custom HTTP
+client. For the common case, prefer `Agent(model="vendor:model_name")` —
+PydanticAI auto-resolves it. See the [Models & providers concept
+guide](../concepts/models-and-providers.md) and the upstream [PydanticAI
+per-vendor docs](https://ai.pydantic.dev/models/overview/) for each Model's
+constructor signature and supported model IDs.
+
+`OutlinesModel` is intentionally not re-exported because it requires the
+optional `outlines` extra. If you need it, install the extra and import
+directly from `pydantic_ai.models.outlines`.
+
+## Concurrency primitives
+
+Used to cap provider-side HTTP request concurrency:
 
 ```python
 from murmur.models import (

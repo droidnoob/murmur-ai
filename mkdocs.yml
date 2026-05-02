@@ -143,6 +143,7 @@ nav:
       - Events & observability: concepts/events.md
       - Cost tracking: concepts/cost.md
       - MCP: concepts/mcp.md
+      - Models & providers: concepts/models-and-providers.md
   - Guides:
       - Distributed deployments: guides/distributed.md
       - Embedded mode: guides/embedded.md
@@ -153,6 +154,7 @@ nav:
       - Overview: api/index.md
       - Agents & types: api/agent.md
       - Models: api/models.md
+      - Providers: api/providers.md
       - Runtime: api/runtime.md
       - Groups: api/groups.md
       - Events: api/events.md

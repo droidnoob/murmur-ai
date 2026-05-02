@@ -172,6 +172,17 @@ def agent_to_spec(agent: Agent) -> AgentSpecYaml:
             f"context_passer {type(agent.context_passer).__name__!r} is not "
             f"YAML-serialisable; supported: {sorted(_CONTEXT_PASSERS)}"
         )
+    # The instance form of ``Agent.model`` (a constructed pydantic_ai Model)
+    # holds live state — HTTP clients, Provider auth, custom base URLs — and
+    # cannot round-trip through YAML. Reject it explicitly; authors who need
+    # an instance-form model must construct the Agent in code.
+    if not isinstance(agent.model, str):
+        raise SpecValidationError(
+            f"agent.model is a constructed Model instance "
+            f"({type(agent.model).__name__!r}); only the string form "
+            f"('vendor:model_name') is YAML-serialisable. Construct this "
+            f"agent in Python code instead."
+        )
     # ``context_passer`` was narrowed by the lookup loop above; ``backend``
     # was validated by AgentSpecYaml when the spec was loaded — agents
     # constructed in code use ``backend: str`` which Pydantic re-validates

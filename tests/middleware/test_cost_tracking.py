@@ -288,7 +288,7 @@ async def test_runtime_with_budget_blocks_after_exhaustion() -> None:
     await budget.consume(1)
 
     backend = AsyncBackend()
-    backend._build_pa_agent = await _stub_pa_agent_with_tokens(0)  # ty: ignore[invalid-assignment]
+    backend._build_pa_agent = await _stub_pa_agent_with_tokens(0)
     runtime = AgentRuntime(
         backend=backend,
         options=RuntimeOptions(token_budget=budget),
@@ -301,7 +301,7 @@ async def test_runtime_with_budget_blocks_after_exhaustion() -> None:
 async def test_runtime_without_budget_skips_middleware() -> None:
     """RuntimeOptions.token_budget=None (default) — no middleware overhead."""
     backend = AsyncBackend()
-    backend._build_pa_agent = await _stub_pa_agent_with_tokens(0)  # ty: ignore[invalid-assignment]
+    backend._build_pa_agent = await _stub_pa_agent_with_tokens(0)
     runtime = AgentRuntime(backend=backend)  # default options, no budget
 
     result = await runtime.run(_agent(), TaskSpec(input="hi"))

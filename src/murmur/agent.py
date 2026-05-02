@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # import from PydanticAI to populate this field.
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.concurrency import AbstractConcurrencyLimiter
+from pydantic_ai.models import Model
 
 from murmur.context.null import NullContextPasser
 from murmur.core.protocols.context import ContextPasser
@@ -64,11 +65,38 @@ class Agent(BaseModel):
     """Stable identifier used as the registry key, broker topic suffix, and
     ``agent_name`` field on every log line and ``RuntimeEvent``."""
 
-    model: str
-    """PydanticAI model string. Format is ``"<provider>:<model_name>"``, e.g.
+    model: str | Model
+    """The agent's model — either a PydanticAI string identifier or a
+    constructed :class:`pydantic_ai.models.Model` instance.
+
+    String form: ``"<provider>:<model_name>"`` — e.g.
     ``"anthropic:claude-sonnet-4-6"``, ``"openai:gpt-5.2"``,
-    ``"google:gemini-3-pro-preview"``. Forwarded to PydanticAI verbatim;
-    Murmur does not maintain its own model registry."""
+    ``"openrouter:anthropic/claude-sonnet-4-5"``. PydanticAI auto-resolves
+    the provider, applies the default authentication (env var per vendor),
+    and constructs the matching :class:`Model` internally. Use this form
+    for the common case.
+
+    Instance form: a constructed Model — used when you need a non-default
+    Provider (Azure OpenAI, Bedrock-hosted Anthropic, Vertex Gemini), a
+    custom HTTP client, custom auth, or a private base URL:
+
+    >>> from murmur.models import OpenRouterModel
+    >>> from murmur.providers import OpenRouterProvider
+    >>> Agent(
+    ...     name="researcher",
+    ...     model=OpenRouterModel(
+    ...         "anthropic/claude-sonnet-4-5",
+    ...         provider=OpenRouterProvider(api_key="sk-or-..."),
+    ...     ),
+    ...     ...,
+    ... )
+
+    The full Model and Provider matrix is re-exported from
+    :mod:`murmur.models` and :mod:`murmur.providers` so user code never
+    has to import from :mod:`pydantic_ai` directly.
+
+    Forwarded to PydanticAI verbatim at dispatch; Murmur does not maintain
+    its own model registry."""
 
     fallback_models: tuple[str, ...] = ()
     """Ordered fallback model names. ``()`` (default) means no fallbacks.

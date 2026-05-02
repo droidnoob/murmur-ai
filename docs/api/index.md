@@ -13,7 +13,8 @@ package, auto-generated from docstrings.
 | Page | Symbols |
 |---|---|
 | [Agents & types](agent.md) | `Agent`, `AgentTemplate`, `TaskSpec`, `AgentResult`, `AgentHandle`, `AgentContext`, `ResultMetadata`, `TrustLevel` |
-| [Models](models.md) | `ConcurrencyLimiter`, `ConcurrencyLimit`, `AbstractConcurrencyLimiter` |
+| [Models](models.md) | `Model`, `AnthropicModel`, `BedrockConverseModel`, `CerebrasModel`, `CohereModel`, `FallbackModel`, `GoogleModel`, `GroqModel`, `HuggingFaceModel`, `MistralModel`, `OllamaModel`, `OpenAIChatModel`, `OpenAIResponsesModel`, `OpenRouterModel`, `XaiModel`, `ConcurrencyLimiter`, `ConcurrencyLimit`, `AbstractConcurrencyLimiter` |
+| [Providers](providers.md) | `AnthropicProvider`, `AzureProvider`, `BedrockProvider`, `CerebrasProvider`, `CohereProvider`, `GoogleProvider`, `GroqProvider`, `HuggingFaceProvider`, `LiteLLMProvider`, `MistralProvider`, `OllamaProvider`, `OpenAIProvider`, `OpenRouterProvider`, `XaiProvider` |
 | [Runtime](runtime.md) | `AgentRuntime`, `RuntimeOptions` |
 | [Groups](groups.md) | `AgentGroup`, `Edge`, `EdgeMapper`, `FanOut`, `get_fan_out_field` |
 | [Events](events.md) | `RuntimeEvent`, `EventType`, `LogEventEmitter`, `SSEEventEmitter`, `MultiEventEmitter`, `BrokerEventBridge` |

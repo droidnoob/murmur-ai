@@ -163,7 +163,7 @@ async def test_multiple_specs_preserve_order(
 async def test_children_inherit_model_from_template(
     runtime: AgentRuntime, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    seen_models: list[str] = []
+    seen_models: list[object] = []
 
     async def fake_run(agent: Agent, task: TaskSpec) -> AgentResult[BaseModel]:
         seen_models.append(agent.model)
