@@ -48,7 +48,11 @@ slot returns its own `AgentResult`. Pre-spawn validation errors raise
 synchronously; post-spawn errors are caught into the per-slot result.
 
 `gather` deliberately bypasses the middleware pipeline (per-slot path
-calls `backend.gather` directly).
+calls `backend.gather` directly). `RuntimeOptions.timeout_seconds`
+still applies — it's enforced inline as a per-batch wall clock. When
+it fires, `gather` raises `SpawnError`; any slots already claimed
+against `max_total_spawns` stay claimed (same semantics as `run()`,
+where `Timeout` sits outside `ClaimSlot` in the pipeline).
 
 ## `run_group` — DAG
 
@@ -309,9 +313,11 @@ consumes a spawn slot or burns timeout budget. See
 [Cascading spawns](#cascading-spawns).
 
 `gather` deliberately bypasses this pipeline (the per-slot path calls
-`backend.gather` directly). Per-slot retries / timeouts aren't applied
-— if you need them, build a single-task helper that goes through
-`runtime.run` and parallelise that.
+`backend.gather` directly). Per-slot retries aren't applied — if you
+need them, build a single-task helper that goes through `runtime.run`
+and parallelise that. `timeout_seconds` is enforced inline at the
+batch level: one wall clock for the whole call, translated to
+`SpawnError` on expiry; slots already claimed stay claimed.
 
 ## Worked example — lifecycle observation
 

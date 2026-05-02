@@ -36,6 +36,7 @@ from murmur.core.errors import (
     RegistryError,
     SpawnCapError,
     SpawnCycleError,
+    SpawnError,
     SpecValidationError,
 )
 from murmur.core.pipeline import Pipeline, PipelineContext
@@ -524,6 +525,13 @@ class AgentRuntime:
         **``fail_fast=True``**: re-raises the first task's error from the
         gathered slots after the batch settles (we still wait for in-flight
         tasks to finish so partial results aren't dropped).
+
+        :attr:`RuntimeOptions.timeout_seconds` applies to the whole batch
+        (matching :meth:`run`'s pipeline-level wrapping). When the wall
+        clock fires before the backend gather settles, the
+        :class:`asyncio.TimeoutError` is translated into
+        :class:`SpawnError` — slots already claimed against
+        ``max_total_spawns`` stay claimed.
         """
         if max_concurrency < 1:
             raise SpecValidationError("max_concurrency must be >= 1")
@@ -631,12 +639,38 @@ class AgentRuntime:
             )
         )
 
-        if callable(backend_gather):
-            results = await backend_gather(
-                resolved, tasks, slot_context, max_concurrency=max_concurrency
-            )
-        else:
-            results = await self._fallback_gather(resolved, tasks, max_concurrency)
+        # Per-batch timeout: ``run`` wraps the whole pipeline in
+        # ``TimeoutMiddleware``; ``gather`` doesn't go through the pipeline,
+        # so backend-native ``gather`` paths (``AsyncBackend.gather``,
+        # ``JobBackend.gather``) drive their own concurrency primitives and
+        # would otherwise ignore ``options.timeout_seconds`` entirely. Mirror
+        # the middleware here so a long-tail batch can't hang past the
+        # configured wall clock. One timeout covers the whole call (matching
+        # ``run`` pipeline-level wrapping) — not per-slot.
+        #
+        # Slot-accounting note: when this fires after ``_claim_spawn_batch``,
+        # the claimed slots stay claimed. Same semantics as ``run()`` — the
+        # pipeline puts ``Timeout`` outside ``ClaimSlot``, so a timed-out
+        # run also keeps its slot. The runtime stays sealed once the cap is
+        # exhausted; rerun behaviour is unchanged.
+        try:
+            async with asyncio.timeout(self._options.timeout_seconds):
+                if callable(backend_gather):
+                    results = await backend_gather(
+                        resolved,
+                        tasks,
+                        slot_context,
+                        max_concurrency=max_concurrency,
+                    )
+                else:
+                    results = await self._fallback_gather(
+                        resolved, tasks, max_concurrency
+                    )
+        except TimeoutError as exc:
+            raise SpawnError(
+                f"gather timed out after {self._options.timeout_seconds}s "
+                f"(agent={resolved.name}, task_count={len(tasks)})"
+            ) from exc
 
         # Token budget post-charge: aggregate the per-slot ``tokens_used``
         # from the batch and decrement the runtime-wide budget. Mirrors
@@ -685,7 +719,6 @@ class AgentRuntime:
         :class:`AgentResult` with ``error`` set rather than propagating —
         matches the spec for :meth:`gather` (default ``fail_fast=False``).
         """
-        from murmur.core.errors import SpawnError
         from murmur.types import ResultMetadata
 
         sem = asyncio.Semaphore(max_concurrency)

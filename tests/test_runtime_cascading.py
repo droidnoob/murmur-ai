@@ -11,6 +11,8 @@ manually) and through the ``spawn_agents`` tool path.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -22,6 +24,7 @@ from murmur.core.errors import (
     DepthLimitError,
     SpawnCapError,
     SpawnCycleError,
+    SpawnError,
 )
 from murmur.events.types import EventType, RuntimeEvent
 from murmur.runtime import RuntimeOptions, _current_spawn, _SpawnFrame
@@ -721,6 +724,90 @@ async def test_gather_rejects_cycle_at_entry() -> None:
         _current_spawn.reset(token)
     # Rejected cycle: no slot consumed.
     assert rt.spawn_count == 0
+
+
+# ---------------------------------------------------------------------------
+# gather() — per-batch timeout enforcement (mirrors TimeoutMiddleware on
+# the run() pipeline; backend-native gather paths bypass middleware so the
+# wall clock has to be enforced inline by the runtime).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gather_completes_under_timeout_on_fast_tasks() -> None:
+    """Happy path: short timeout, fast tasks settle normally."""
+    rt = AgentRuntime(options=RuntimeOptions(timeout_seconds=5.0))
+    a = _agent("a")
+    results = await rt.gather(a, [TaskSpec(input=str(i)) for i in range(3)])
+    assert len(results) == 3
+    assert all(r.is_ok() for r in results)
+
+
+@pytest.mark.asyncio
+async def test_gather_raises_spawn_error_on_timeout() -> None:
+    """Sad path: a slow ``backend.gather`` past ``timeout_seconds`` must
+    raise :class:`SpawnError` rather than hang. Mirrors ``TimeoutMiddleware``
+    on the ``run()`` pipeline — backend-native gather bypasses middleware,
+    so the runtime enforces the wall clock inline."""
+    rt = AgentRuntime(options=RuntimeOptions(timeout_seconds=0.1))
+
+    async def slow_gather(
+        agent: Agent,  # noqa: ARG001
+        tasks: Sequence[TaskSpec],  # noqa: ARG001
+        context: AgentContext | None = None,  # noqa: ARG001
+        *,
+        max_concurrency: int = 100,  # noqa: ARG001
+    ) -> list[Any]:
+        await asyncio.sleep(2.0)
+        return []
+
+    # Backend Protocol doesn't expose ``gather``; reach in via ``setattr`` to
+    # keep the test seam off the type checker's radar (same pattern as the
+    # ``_build_pa_agent`` patches above).
+    setattr(rt._backend, "gather", slow_gather)  # noqa: B010
+
+    with pytest.raises(SpawnError, match="gather timed out after 0.1s"):
+        await rt.gather(_agent("a"), [TaskSpec(input="x")])
+
+
+@pytest.mark.asyncio
+async def test_gather_timeout_keeps_slots_claimed() -> None:
+    """Slot-accounting after timeout: a timed-out batch keeps the slots it
+    claimed (matches ``run()`` semantics — ``Timeout`` sits outside
+    ``ClaimSlot`` in the pipeline). The runtime stays usable; remaining
+    headroom is still claimable by subsequent ``run()`` calls.
+    """
+    rt = AgentRuntime(
+        options=RuntimeOptions(timeout_seconds=0.1, max_total_spawns=10),
+    )
+
+    async def slow_gather(
+        agent: Agent,  # noqa: ARG001
+        tasks: Sequence[TaskSpec],  # noqa: ARG001
+        context: AgentContext | None = None,  # noqa: ARG001
+        *,
+        max_concurrency: int = 100,  # noqa: ARG001
+    ) -> list[Any]:
+        await asyncio.sleep(2.0)
+        return []
+
+    # See sibling test for the reach-in rationale.
+    setattr(rt._backend, "gather", slow_gather)  # noqa: B010
+
+    with pytest.raises(SpawnError, match="gather timed out"):
+        await rt.gather(_agent("a"), [TaskSpec(input=str(i)) for i in range(3)])
+
+    # Slots claimed before the wall clock fired stay claimed.
+    assert rt.spawn_count == 3
+
+    # Restore the real gather so the follow-up run is unaffected — deleting
+    # the instance attr unshadows the class method.
+    delattr(rt._backend, "gather")
+
+    # Runtime is not corrupted — subsequent runs still work and continue
+    # consuming headroom from where the timed-out batch left off.
+    await rt.run(_agent("b"), TaskSpec(input="after"))
+    assert rt.spawn_count == 4
 
 
 # ---------------------------------------------------------------------------
