@@ -41,6 +41,7 @@ from murmur.messages import (
     ResultMessage,
     TaskMessage,
     events_topic,
+    sign_task_message,
     task_topic,
 )
 from murmur.types import (
@@ -76,6 +77,7 @@ class JobBackend:
         default_timeout: float | None = None,
         publish_events: bool = False,
         event_emitter: EventEmitter | None = None,
+        signing_key: bytes | None = None,
     ) -> None:
         self._broker = broker
         self._runtime_id: str = runtime_id or str(uuid.uuid4())
@@ -99,6 +101,14 @@ class JobBackend:
                 "so received events have somewhere to land"
             )
         self._event_emitter: EventEmitter | None = event_emitter
+        # ``None`` (default) keeps the documented "broker is trusted"
+        # baseline — no signature is computed, the wire stays
+        # byte-identical to pre-signing builds. When set, every
+        # outbound :class:`TaskMessage` is signed via
+        # :func:`sign_task_message` before publish; the matching
+        # :class:`Worker` must be built with the same key (or a
+        # rotation tuple containing it) for verification to succeed.
+        self._signing_key: bytes | None = signing_key
 
     @property
     def runtime_id(self) -> str:
@@ -179,6 +189,7 @@ class JobBackend:
             events_topic=self._events_topic_for_publish(),
             parent_spawn=_parent_spawn_from_context(context),
         )
+        msg = self._maybe_sign(msg, agent_name=agent.name)
         await log.ainfo(
             "agent_spawned",
             agent_name=agent.name,
@@ -283,6 +294,7 @@ class JobBackend:
                 events_topic=bridge_topic,
                 parent_spawn=parent_spawn,
             )
+            msg = self._maybe_sign(msg, agent_name=agent.name)
             await self._emit_dispatched(agent=agent, task=task)
             await self._broker.publish(topic, msg.model_dump_json().encode())
 
@@ -294,6 +306,19 @@ class JobBackend:
             _msg_to_result(slots[i], agent=agent, user_task_id=tasks[i].id)
             for i in range(len(tasks))
         ]
+
+    # ------------------------------------------------------------------ signing
+
+    def _maybe_sign(self, msg: TaskMessage, *, agent_name: str) -> TaskMessage:
+        """Stamp ``msg.signature`` when the runtime configured a key.
+
+        Returns the message unchanged when no key is set — pre-signing
+        builds and ``broker_signing_key=None`` paths produce
+        byte-identical envelopes.
+        """
+        if self._signing_key is None:
+            return msg
+        return sign_task_message(msg, agent_name=agent_name, key=self._signing_key)
 
     # ------------------------------------------------------------------ events
 

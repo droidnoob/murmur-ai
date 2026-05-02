@@ -100,6 +100,7 @@ runtime = AgentRuntime(
 | `max_total_spawns` | `None` | Optional per-runtime kill switch on total dispatches — see [Cascading spawns](#cascading-spawns). |
 | `token_budget` | `None` | If set, wires `CostTrackingMiddleware`. See [Cost](cost.md). |
 | `mcp_eager_start` | `False` | If set, holds MCP subprocesses warm across runs. See [MCP](mcp.md). |
+| `broker_signing_key` | `None` | If set, signs outbound `TaskMessage` envelopes — see [Authenticated broker envelopes](#authenticated-broker-envelopes). |
 
 ## Cascading spawns
 
@@ -144,6 +145,48 @@ Cross-process cascade — when the runtime is broker-backed
 `SpawnFrame` so cycle / depth / `parent_trace_id` enforcement survives
 the broker hop. The graph itself is per-run; it does not federate
 across runtimes that share a broker.
+
+### Authenticated broker envelopes
+
+The default trust model assumes the broker is a trusted channel between
+trusted publishers and trusted workers — anyone with broker write access
+can already publish arbitrary tasks, so cascading-spawn controls are
+defensive programming against runaway LLM tool loops, not a security
+boundary against a hostile producer.
+
+Deployments that can't make that assumption (shared brokers, multi-tenant
+queues, weaker network ACLs) can opt into HMAC-signed envelopes. Set
+`broker_signing_key` on the publisher and pass the same key to every
+matching `Worker`:
+
+```python
+import secrets
+
+key = secrets.token_bytes(32)  # >= 32 bytes; raw bytes, no derivation
+
+publisher = AgentRuntime(
+    broker="kafka://localhost:9092",
+    options=RuntimeOptions(broker_signing_key=key),
+)
+worker = Worker(broker=broker, agents={...}, signing_key=key)
+```
+
+The publisher signs each outbound `TaskMessage` over its safety-relevant
+fields (`agent_name`, `request_id`, and the `parent_spawn` snapshot)
+using stdlib `hmac.new(key, ..., hashlib.sha256).hexdigest()`. The
+worker verifies on receive and — on a missing or mismatched signature —
+publishes a structured failure `ResultMessage` to the publisher's reply
+topic (so `await runtime.run(...)` resolves cleanly with `result.error`
+set) and never dispatches the agent. Verification failure never crashes
+the worker.
+
+Key rotation: the worker's `signing_key=` accepts a tuple. To roll
+without downtime, stamp new workers with `(new, old)`, swap publishers
+to `new`, then drop `old` once the queue has drained.
+
+Default is `broker_signing_key=None` — no signature is computed or
+verified, on-wire format identical to pre-signing builds. Authentic
+envelopes are opt-in for deployments that need them.
 
 ## `publish_events` — distributed observability
 

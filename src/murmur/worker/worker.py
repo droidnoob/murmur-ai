@@ -25,7 +25,13 @@ import structlog.contextvars
 
 from murmur.core.errors import SpecValidationError
 from murmur.core.protocols.worker import OnComplete, OnError, OnStart
-from murmur.messages import ResultMessage, TaskMessage, result_topic, task_topic
+from murmur.messages import (
+    ResultMessage,
+    TaskMessage,
+    result_topic,
+    task_topic,
+    verify_task_message,
+)
 
 if TYPE_CHECKING:
     from murmur.agent import Agent
@@ -47,6 +53,7 @@ class Worker:
         runtime: AgentRuntime | None = None,
         concurrency: int = 10,
         prefetch: int = 5,
+        signing_key: bytes | tuple[bytes, ...] | None = None,
     ) -> None:
         if not agents:
             raise SpecValidationError("Worker requires at least one agent")
@@ -54,6 +61,32 @@ class Worker:
             raise SpecValidationError("concurrency must be >= 1")
         if prefetch < 1:
             raise SpecValidationError("prefetch must be >= 1")
+        # Normalise signing_key to a tuple; ``None`` means "verification
+        # disabled, broker is trusted" (default — unchanged behaviour).
+        # A tuple supports key rotation: stamp new workers with
+        # ``(new, old)``, swap publishers to ``new``, then drop ``old``
+        # once the queue has drained. Validate non-empty bytes upfront
+        # so a misconfiguration like ``signing_key=()`` doesn't silently
+        # turn into "every signature rejected".
+        self._signing_keys: tuple[bytes, ...] | None
+        if signing_key is None:
+            self._signing_keys = None
+        elif isinstance(signing_key, bytes):
+            if not signing_key:
+                raise SpecValidationError("signing_key must be non-empty bytes")
+            self._signing_keys = (signing_key,)
+        else:
+            keys = tuple(signing_key)
+            if not keys:
+                raise SpecValidationError(
+                    "signing_key tuple must contain at least one key"
+                )
+            for k in keys:
+                if not isinstance(k, bytes) or not k:
+                    raise SpecValidationError(
+                        "every key in signing_key must be non-empty bytes"
+                    )
+            self._signing_keys = keys
 
         from murmur.events.broker import BrokerEventBridge
         from murmur.events.log import LogEventEmitter
@@ -180,6 +213,40 @@ class Worker:
         from murmur.types import AgentContext
 
         agent = self._agents[agent_name]
+        # Authenticated envelopes (opt-in): when ``signing_key`` was
+        # supplied, every inbound TaskMessage MUST carry a valid
+        # signature over (agent_name, request_id, parent_spawn). Missing
+        # signatures count as rejection too — otherwise an attacker just
+        # omits the field. Failure publishes a structured
+        # ``ResultMessage(success=False)`` to ``reply_to`` so the
+        # publisher's ``await runtime.run(...)`` resolves cleanly with
+        # ``result.error`` set; the agent never dispatches. Never raises
+        # out of the handler — broken envelopes don't take the worker
+        # down (DoS-resistance).
+        if self._signing_keys is not None and not verify_task_message(
+            msg, agent_name=agent_name, keys=self._signing_keys
+        ):
+            await log.aerror(
+                "worker_signature_rejected",
+                agent_name=agent_name,
+                task_id=msg.task_id,
+                request_id=msg.request_id,
+                reason="missing" if msg.signature is None else "mismatch",
+            )
+            response = ResultMessage(
+                batch_id=msg.batch_id,
+                task_id=msg.task_id,
+                request_id=msg.request_id,
+                success=False,
+                output_payload=None,
+                error_message="signature verification failed",
+                agent_name=agent_name,
+            )
+            await self._broker.publish(
+                msg.reply_to, response.model_dump_json().encode()
+            )
+            return
+
         # A Worker is a re-entry point. With an in-memory broker the
         # publisher and consumer share an asyncio context, so any spawn
         # frame on the publisher's contextvar leaks into the worker's

@@ -14,11 +14,20 @@ typed :class:`murmur.types.AgentResult` locally.
 
 ``request_id`` propagates end-to-end so logs, HTTP requests, and broker
 traffic correlate cleanly.
+
+Optional :attr:`TaskMessage.signature` carries a stdlib-only HMAC-SHA256
+hex digest over the safety-relevant fields (``agent_name``,
+``request_id``, ``parent_spawn``). Off by default — see
+:func:`sign_task_message` and :func:`verify_task_message` plus
+:attr:`murmur.runtime.RuntimeOptions.broker_signing_key`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import hashlib
+import hmac
+import json
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -93,6 +102,27 @@ class TaskMessage(BaseModel):
     the parent frame so cycle / depth / ``parent_trace_id`` enforcement
     survives the broker hop."""
 
+    signature: str | None = None
+    """Optional HMAC-SHA256 hex digest authenticating the safety-relevant
+    fields of this envelope. ``None`` (default) means "no signature was
+    attached" — workers run unverified, matching the documented "broker
+    is trusted" baseline.
+
+    When the publisher's :class:`murmur.runtime.RuntimeOptions` carries
+    ``broker_signing_key``, :class:`murmur.backends.JobBackend` calls
+    :func:`sign_task_message` to compute the digest before
+    serialisation and stamps it here. A worker constructed with the
+    matching key calls :func:`verify_task_message` on receipt and
+    rejects mismatched / missing signatures with a structured failure
+    :class:`ResultMessage` (no exception escapes the handler — broken
+    envelopes don't take the worker down).
+
+    Recommended key length is **at least 32 random bytes**
+    (e.g. ``secrets.token_bytes(32)``); pass them as raw ``bytes`` —
+    no key derivation layer. The worker accepts a sequence of keys
+    for rotation; the publisher signs with one. See
+    :func:`signing_payload` for the exact canonical format."""
+
 
 class ResultMessage(BaseModel):
     """Envelope published onto a reply topic; consumed by the runtime.
@@ -124,6 +154,113 @@ class ResultMessage(BaseModel):
 
     metadata_extras: Mapping[str, Any] = Field(default_factory=dict)
     """Future-proof: extra metadata fields for forward compatibility."""
+
+
+def signing_payload(
+    *,
+    agent_name: str,
+    request_id: str,
+    parent_spawn: ParentSpawn | None,
+) -> bytes:
+    """Canonical bytes that ``signature`` covers.
+
+    Deterministic JSON of a flat dict with three keys::
+
+        {"agent_name": "...", "parent_spawn": {...} | null, "request_id": "..."}
+
+    Encoded via ``json.dumps(..., sort_keys=True, separators=(",", ":"))``
+    so the same logical envelope always serialises to identical bytes
+    regardless of insertion order — required for HMAC determinism.
+
+    ``parent_spawn`` is rendered with its keys also sorted; ``ancestors``
+    is materialised as a sorted list (frozensets are not JSON-native,
+    and sorting both ends matches every ordering). The result is UTF-8
+    encoded for :func:`hmac.new`.
+
+    The exact format is part of the wire contract — any reimplementation
+    on a worker fleet that doesn't share this codebase must match
+    byte-for-byte. The publisher choosing ``events_topic`` / ``reply_to``
+    is intentionally NOT signed: those are publisher-controlled routing
+    that the worker cannot validate, and signing them would conflate
+    routing with authenticity.
+    """
+    if parent_spawn is None:
+        parent_blob: dict[str, Any] | None = None
+    else:
+        parent_blob = {
+            "agent_name": parent_spawn.agent_name,
+            "ancestors": sorted(parent_spawn.ancestors),
+            "depth": parent_spawn.depth,
+            "trace_id": parent_spawn.trace_id,
+        }
+    payload = {
+        "agent_name": agent_name,
+        "parent_spawn": parent_blob,
+        "request_id": request_id,
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def sign_task_message(
+    msg: TaskMessage,
+    *,
+    agent_name: str,
+    key: bytes,
+) -> TaskMessage:
+    """Return a copy of ``msg`` with :attr:`TaskMessage.signature` set.
+
+    ``agent_name`` is signed separately from the envelope (it is not a
+    field on :class:`TaskMessage`). The publisher passes the agent it's
+    routing to; the worker's bound handler validates against the same
+    name, so a forged envelope routed to the wrong topic still fails.
+
+    HMAC algorithm: ``hmac.new(key, msg=payload, digestmod=hashlib.sha256).hexdigest()``
+    where ``payload`` comes from :func:`signing_payload`.
+    """
+    digest = hmac.new(
+        key,
+        msg=signing_payload(
+            agent_name=agent_name,
+            request_id=msg.request_id,
+            parent_spawn=msg.parent_spawn,
+        ),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+    return msg.model_copy(update={"signature": digest})
+
+
+def verify_task_message(
+    msg: TaskMessage,
+    *,
+    agent_name: str,
+    keys: Sequence[bytes],
+) -> bool:
+    """``True`` iff ``msg.signature`` matches the digest under any key.
+
+    Constant-time compare via :func:`hmac.compare_digest` so the worker
+    can't be timed into discovering which key matched. ``keys`` is a
+    sequence so deployments can roll keys without downtime: stamp new
+    workers with ``(new, old)``, swap publishers to ``new``, then drop
+    ``old`` once the queue has drained.
+
+    Returns ``False`` when ``msg.signature`` is ``None`` or no key
+    matches. Caller decides what to do with the rejection — this helper
+    never raises on a bad signature (callers want to publish a structured
+    failure, not crash).
+    """
+    if msg.signature is None or not keys:
+        return False
+    payload = signing_payload(
+        agent_name=agent_name,
+        request_id=msg.request_id,
+        parent_spawn=msg.parent_spawn,
+    )
+    expected = msg.signature
+    for key in keys:
+        candidate = hmac.new(key, msg=payload, digestmod=hashlib.sha256).hexdigest()
+        if hmac.compare_digest(candidate, expected):
+            return True
+    return False
 
 
 def task_topic(agent_name: str) -> str:
@@ -160,5 +297,8 @@ __all__ = [
     "TaskMessage",
     "events_topic",
     "result_topic",
+    "sign_task_message",
+    "signing_payload",
     "task_topic",
+    "verify_task_message",
 ]

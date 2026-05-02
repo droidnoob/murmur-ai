@@ -146,6 +146,28 @@ class RuntimeOptions(BaseModel):
     with :class:`BudgetExceededError` before dispatch and emit a
     :data:`EventType.BUDGET_EXCEEDED` event."""
 
+    broker_signing_key: bytes | None = None
+    """Optional symmetric HMAC-SHA256 key for authenticating broker
+    envelopes — opt-in. Default ``None`` preserves the documented "broker
+    is trusted" baseline: no signature is computed or verified.
+
+    When set on a publisher runtime, :class:`murmur.backends.JobBackend`
+    signs every outbound :class:`murmur.messages.TaskMessage` over its
+    safety-relevant fields (``agent_name``, ``request_id``,
+    ``parent_spawn``) before publishing. The matching worker — built
+    with :class:`murmur.worker.Worker(..., signing_key=...)` — verifies
+    on receive and rejects mismatched / missing signatures with a
+    structured failure :class:`murmur.messages.ResultMessage` so the
+    publisher's :meth:`AgentRuntime.run` resolves cleanly with
+    ``result.error`` set rather than the worker crashing.
+
+    Recommended length is **at least 32 random bytes**
+    (``secrets.token_bytes(32)``). Pass them as raw ``bytes`` — there is
+    no key-derivation layer. For key rotation, the worker accepts a
+    sequence of keys (``signing_key=(new, old)``) and verifies against
+    any; the publisher always signs with one — roll new workers first,
+    swap the publisher, then drop ``old``."""
+
     mcp_eager_start: bool = False
     """Hold MCP toolset providers open across runs via supervisor tasks.
 
@@ -210,10 +232,12 @@ class AgentRuntime:
         )
         self._runtime_id: str = runtime_id or str(uuid.uuid4())
         self._publish_events: bool = publish_events
+        # Options must land before ``_build_backend`` reads
+        # ``broker_signing_key`` off them.
+        self._options: RuntimeOptions = options or RuntimeOptions()
         self._backend: Backend = backend or self._build_backend(
             broker_url=broker, broker_instance=broker_instance
         )
-        self._options: RuntimeOptions = options or RuntimeOptions()
         # Providers seen via ``_resolve`` — kept for shutdown cleanup. Object
         # identity is the right key (Protocol instances aren't hashable in
         # general, but our concrete is a regular class).
@@ -898,12 +922,14 @@ class AgentRuntime:
         # fires publisher-side on every broker dispatch — independent of the
         # ``publish_events`` bridge. The bridge only governs whether
         # worker-side events are *relayed back* over the broker.
+        signing_key = self._options.broker_signing_key
         if broker_instance is not None:
             return JobBackend(
                 broker=broker_instance,
                 runtime_id=self._runtime_id,
                 publish_events=self._publish_events,
                 event_emitter=self._emitter,
+                signing_key=signing_key,
             )
         if broker_url is None:
             if self._publish_events:
@@ -929,6 +955,7 @@ class AgentRuntime:
             broker_url=broker_url,
             publish_events=self._publish_events,
             event_emitter=self._emitter,
+            signing_key=signing_key,
         )
 
     @staticmethod
