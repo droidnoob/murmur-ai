@@ -129,7 +129,8 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = [
-    "E",      # pycodestyle errors
+    "E",      # pycodestyle errors (incl. E401 multiple-imports-on-one-line)
+    "E401",   # multiple imports on one line — listed explicitly for visibility
     "F",      # pyflakes
     "I",      # isort
     "UP",     # pyupgrade
