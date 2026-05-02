@@ -8,8 +8,11 @@ public API rule.
 from murmur.interop import as_faststream_handler, from_pydantic_ai
 ```
 
-See [Migrating from PydanticAI / FastStream](../guides/migration.md) for
-worked examples.
+See the migration guides for worked examples:
+
+- [From PydanticAI](../guides/migration-pydantic-ai.md)
+- [From FastStream](../guides/migration-faststream.md)
+- [From raw asyncio](../guides/migration-asyncio.md)
 
 ## `from_pydantic_ai`
 

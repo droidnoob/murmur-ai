@@ -144,7 +144,9 @@ nav:
   - Guides:
       - Distributed deployments: guides/distributed.md
       - Embedded mode: guides/embedded.md
-      - Migrating from PydanticAI / FastStream: guides/migration.md
+      - Migrating from PydanticAI: guides/migration-pydantic-ai.md
+      - Migrating from FastStream: guides/migration-faststream.md
+      - Migrating from raw asyncio: guides/migration-asyncio.md
   - API reference:
       - Overview: api/index.md
       - Agents & types: api/agent.md

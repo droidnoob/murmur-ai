@@ -2,9 +2,15 @@
 
 > **Agents that move as one.**
 
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/downloads/)
+[![pydantic-ai](https://img.shields.io/badge/pydantic--ai-1.87-purple)](https://ai.pydantic.dev/)
+[![FastStream](https://img.shields.io/badge/faststream-0.6-orange)](https://faststream.airt.ai/)
+[![PyPI](https://img.shields.io/badge/pypi-murmur--ai-blueviolet)](https://pypi.org/project/murmur-ai/)
+[![Status](https://img.shields.io/badge/status-pre--alpha-lightgrey)](#status)
+
 A Python multi-agent orchestration runtime. Strictly typed, broker-agnostic, zero-config to start, distributed when you need it.
 
-> **Status:** pre-alpha. Interfaces will change.
+📖 **[Documentation →](https://murmur-ai.github.io/murmur/)** · 🧭 **[Concepts →](https://murmur-ai.github.io/murmur/concepts/architecture/)** · 📚 **[API reference →](https://murmur-ai.github.io/murmur/api/)** · 🛠️ **[Contributing →](CONTRIBUTING.md)**
 
 ---
 
@@ -12,7 +18,7 @@ A Python multi-agent orchestration runtime. Strictly typed, broker-agnostic, zer
 
 Murmur is **infrastructure**, not an agent framework. It does not define how an agent thinks — it defines how agents are spawned, distributed, and coordinated. The mental model is a **hypervisor** for LLM agents: spawn it, give it context, get a structured result back, kill it if needed.
 
-Internally, Murmur builds on PydanticAI for single-agent execution and FastStream for broker-backed distribution — but those are **dependencies, not your imports**. Everything you write is `from murmur import ...`.
+Internally, Murmur builds on [PydanticAI](https://ai.pydantic.dev/) for single-agent execution and [FastStream](https://faststream.airt.ai/) for broker-backed distribution — but those are **dependencies, not your imports**. Everything you write is `from murmur import ...`.
 
 ## Why
 
@@ -20,12 +26,13 @@ Most agent runtimes either lock you into one execution model (in-process only, o
 
 ## Design principles
 
-- **Pluggable everything, sensible defaults.** Override what you care about.
+- **Pluggable everything, sensible defaults.** Override only what you care about.
 - **Strict I/O contracts.** Every input and output is a Pydantic schema. No free text between agents.
 - **Tools execute in the runtime, not the agent.** The agent requests a call; the runtime enforces policy, executes, logs, returns the result.
 - **User-controlled context passing.** The runtime never decides what the next agent sees — you do, via a policy.
 - **Single-agent and multi-agent share one interface.** A router decides which path runs.
-- **Backends are interchangeable.** Thread for dev, FastStream for prod, container for untrusted contexts.
+- **Backends are interchangeable.** Thread for dev, FastStream for prod, container for untrusted contexts (Phase 4).
+- **Observable by default.** Every spawn, tool call, completion flows through a typed `RuntimeEvent` to swappable emitters.
 - **One public API.** `from murmur import ...` — no PydanticAI or FastStream types leak outward.
 
 ## Architecture
@@ -38,13 +45,12 @@ Task → Router → Context → Tool resolve → Execute → Tool proxy → Vali
                           middleware: cost · timeout · retry · depth limit · observability
 ```
 
-Backends:
+Backends shipped:
 
 ```
 ThreadBackend     asyncio  · default · zero-config
-ProcessBackend    CPU isolation
 JobBackend        FastStream — Kafka / NATS / RabbitMQ / Redis Streams
-ContainerBackend  Docker — full isolation for untrusted context  (phase 4)
+ContainerBackend  Docker — full isolation for untrusted context  (Phase 4)
 ```
 
 Trust levels gate tool access: `HIGH` (full) · `MEDIUM` (curated) · `LOW` (read-only) · `SANDBOX` (none).
@@ -52,22 +58,29 @@ Trust levels gate tool access: `HIGH` (full) · `MEDIUM` (curated) · `LOW` (rea
 Context passers form a cost/quality ladder:
 
 ```
-Null → Full → Summary → Selective
+Null → Full → Summary → Selective   (Summary / Selective ship in Phase 3)
 ```
 
-## Quick start
-
-### Install
+## Install
 
 ```bash
 uv add murmur-ai                   # ThreadBackend, no broker — works immediately
 uv add 'murmur-ai[kafka]'          # add Kafka support
-uv add 'murmur-ai[all]'            # all brokers
+uv add 'murmur-ai[server]'         # FastAPI HTTP server
+uv add 'murmur-ai[all]'            # all four brokers
 ```
 
 > Murmur is built and managed with [`uv`](https://github.com/astral-sh/uv). Install with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 
-### Hello, agent
+Persistence extras (production deployments):
+
+```bash
+uv add 'murmur-ai[sqlite]'         # single-host file-backed RunStore
+uv add 'murmur-ai[redis-runstore]' # cluster-wide RunStore
+uv add 'murmur-ai[rocksdb]'        # high-throughput single-host
+```
+
+## Quickstart
 
 ```python
 import asyncio
@@ -75,8 +88,6 @@ import asyncio
 from pydantic import BaseModel
 
 from murmur import Agent, AgentRuntime, TaskSpec
-from murmur.context import NullContextPasser
-from murmur.types import TrustLevel
 
 
 class ResearchOutput(BaseModel):
@@ -90,9 +101,6 @@ researcher = Agent(
     model="anthropic:claude-sonnet-4-6",
     instructions="Given a topic, return a structured summary with sources.",
     output_type=ResearchOutput,
-    tools=["web_search"],
-    trust_level=TrustLevel.MEDIUM,
-    context_passer=NullContextPasser(),
 )
 
 
@@ -108,7 +116,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-### Same agent, distributed
+## Same agent, distributed
 
 ```python
 runtime = AgentRuntime(broker="kafka://localhost:9092")     # JobBackend via FastStream
@@ -123,26 +131,20 @@ results = await runtime.gather(
 
 Same `Agent`. Different runtime constructor. The agent does not know it moved.
 
-### YAML specs
+## YAML specs
 
 ```yaml
+version: 1
 name: researcher
 model: anthropic:claude-sonnet-4-6
 trust_level: medium
 context_passer: "null"
-backend: auto
 
 instructions: |
   You are a research agent. Given a topic, return a structured
   summary with sources.
 
-output_schema:
-  type: object
-  required: [summary, sources, confidence]
-  properties:
-    summary:    { type: string }
-    sources:    { type: array, items: { type: string } }
-    confidence: { type: number, minimum: 0.0, maximum: 1.0 }
+output_type: my_pkg.outputs.ResearchOutput   # importable class path
 
 tools:
   - web_search
@@ -168,57 +170,89 @@ from murmur.worker import Worker
 
 worker = Worker(runtime=runtime, agents=["researcher"], concurrency=20)
 
+
 @worker.on_task_complete
 async def on_complete(task_id: str, agent_name: str, duration_ms: int) -> None:
     print(f"[{task_id}] {agent_name} done in {duration_ms}ms")
 
+
 await worker.start()
 ```
 
-## CLI (Phase 1)
+## Observability — out of the box
+
+```python
+from murmur.events import LogEventEmitter, MultiEventEmitter, SSEEventEmitter
+
+sse = SSEEventEmitter(heartbeat_interval=15.0)
+runtime = AgentRuntime(
+    event_emitter=MultiEventEmitter([LogEventEmitter(), sse]),
+)
+
+# Hand sse.subscribe() to a FastAPI EventSourceResponse for a live dashboard.
+```
+
+`murmur serve` exposes the same SSE stream as a standalone HTTP server:
+
+```bash
+murmur serve --broker kafka://localhost:9092 --publish-events --port 8420
+# GET /events/stream — live RuntimeEvent frames for the entire worker fleet
+```
+
+## CLI
 
 ```bash
 murmur run script.py                  # run a Python script
-murmur validate specs/                # validate all specs
+murmur validate specs/                # validate YAML specs
 murmur worker start --agents X        # start a distributed worker
+murmur serve --port 8420              # standalone HTTP server + SSE stream
 ```
 
-`murmur serve`, `murmur workflow run`, and `murmur status` are later phases.
+`murmur workflow run` and `murmur status` are later phases.
 
 ## Stack
 
 | Layer        | Choice                                |
 | ------------ | ------------------------------------- |
-| Language     | Python 3.11+                          |
+| Language     | Python 3.11 / 3.12 / 3.13             |
 | Validation   | Pydantic 2.13                         |
-| Agents       | PydanticAI 1.87  (internal)           |
-| Distribution | FastStream 0.6   (internal)           |
+| Agents       | PydanticAI 1.87  *(internal)*         |
+| Distribution | FastStream 0.6   *(internal)*         |
 | Logging      | structlog 25.5                        |
 | Packaging    | uv                                    |
 | Lint/Format  | ruff                                  |
 | Type check   | ty (Astral)                           |
 | Testing      | pytest · pytest-asyncio · hypothesis  |
+| Docs         | mkdocs-material + mkdocstrings        |
 
-Versions are pinned exactly in `pyproject.toml`. See `CLAUDE.md` for rationale.
+Versions pinned exactly in `pyproject.toml`. See [`CLAUDE.md`](./CLAUDE.md) §9 for rationale.
 
 ## Project layout
 
 ```
 src/murmur/
-    __init__.py        # public API: Agent, AgentRuntime, TaskSpec, TrustLevel, AgentResult
+    __init__.py        # public API: Agent, AgentRuntime, TaskSpec, TrustLevel, AgentResult, AgentGroup, Edge, FanOut, ...
     agent.py           # Agent (wraps PydanticAI internally)
-    runtime.py         # AgentRuntime + broker-URL parsing
-    types.py           # TrustLevel, TaskSpec, AgentResult, AgentHandle
+    runtime.py         # AgentRuntime + RuntimeOptions + broker-URL parsing
+    types.py           # frozen value types
 
-    core/              # pipeline, router, errors  (zero sibling imports)
+    core/              # protocols, pipeline, errors  (zero sibling imports)
     context/           # context passers (full · null)
-    tools/             # tool registry + executor + builtins
+    tools/             # tool registry + executor + MCP factories + builtin re-exports
     backends/          # thread · job (FastStream wrapper)
+    groups/            # AgentGroup, Edge, runner
+    middleware/        # retry · timeout · depth_limit · cost_tracking
+    runs/              # RunStore + 4 concretes (in-memory · sqlite · rocksdb · redis)
+    events/            # RuntimeEvent + 4 emitter concretes
+    server/            # AgentServer + AgentRouter
     worker/            # distributed worker with lifecycle hooks
     registry/          # YAML + in-memory spec loaders
-    middleware/        # retry · timeout · depth_limit
     interop/           # from_pydantic_ai · as_faststream_handler
-    cli/               # run · validate · worker
+    cli/               # run · validate · worker · serve
+
+packages/murmur-client/        # separate wheel — HTTP + LocalClient
+
+docs/                  # mkdocs site (concepts, guides, API ref)
 tests/
 ```
 
@@ -226,25 +260,37 @@ PyPI distribution: `murmur-ai`. Import: `murmur` (`pip install murmur-ai` → `i
 
 The dependency arrow points inward to `core/` and `types.py`. Only `murmur.interop` may import `pydantic_ai` or `faststream`.
 
+## Status
+
+Pre-alpha. The runtime is feature-complete on its public surface — Phase 1 + 1.5 + 1.6 + 2 all shipped (events, cost tracking, distributed event bridge, MCP consume side, persistent run stores, standalone server, embedded mode). Phase 3 (smart context passers, group coordination tools, YAML workflow engine) and Phase 4 (Container isolation, full trust matrix, cascading-spawn controls) are scoped but not started.
+
+Public API is stable on the surface that's shipped. Additive changes only until v0.1.
+
 ## Development
 
 ```bash
 uv sync --group dev          # install dev tools
+uv sync --group docs         # docs build deps (when editing docs/)
 
-uv run ruff check .          # lint
-uv run ruff format .         # format
-uv run ty check              # type check
+uv run ruff check src tests
+uv run ruff format src tests
+uv run ty check
 uv run pytest                # all tests
-uv run pytest -m "not integration"   # unit only
+uv run pytest -m "not integration"   # unit only — 556 passing
 uv run pre-commit run --all-files
+
+uv run mkdocs serve          # local docs preview at :8000
 ```
 
-CI fails on any of: ruff lint, ruff format drift, `ty` errors, failing tests.
+CI fails on any of: ruff lint, ruff format drift, `ty` errors, failing tests, dead docs links.
 
 ## Contributing
 
-Read [`CLAUDE.md`](./CLAUDE.md) first — it is the source of truth for project conventions, architecture, and "do not build" boundaries. Mirrored to [`AGENTS.md`](./AGENTS.md) for non-Claude tooling.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup and quality gates,
+and read [`CLAUDE.md`](./CLAUDE.md) — the source of truth for project
+conventions, architecture, and "do not build" boundaries. Mirrored to
+[`AGENTS.md`](./AGENTS.md) for non-Claude tooling.
 
 ## License
 
-TBD.
+TBD before v0.1.

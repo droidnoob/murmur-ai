@@ -49,7 +49,7 @@ with orchestration config (trust_level, context_passer, mcp_servers).
 internally. You never see `KafkaBroker`.
 
 PydanticAI and FastStream are dependencies, not public API. Migration
-adapters live in [`murmur.interop`](../guides/migration.md) — that's the
+adapters live in [`murmur.interop`](../guides/migration-pydantic-ai.md) — that's the
 only place allowed to import them.
 
 ## Protocols-first
