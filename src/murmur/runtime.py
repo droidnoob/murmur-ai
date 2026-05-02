@@ -95,6 +95,29 @@ class RuntimeOptions(BaseModel):
     with :class:`BudgetExceededError` before dispatch and emit a
     :data:`EventType.BUDGET_EXCEEDED` event."""
 
+    mcp_eager_start: bool = False
+    """Hold MCP toolset providers open across runs via supervisor tasks.
+
+    Default ``False`` — every dispatch re-enters the MCP server's context
+    (PydanticAI does this internally on each ``list_tools`` /
+    ``direct_call_tool``), respawning the stdio subprocess each time.
+    Cheap for low-frequency calls; wasteful at high throughput.
+
+    When ``True``, :class:`AgentRuntime` spawns one supervisor task per
+    provider on first dispatch. The supervisor enters the provider's
+    context once (spawning the subprocess), holds the entry open until
+    :meth:`AgentRuntime.shutdown` signals shutdown, then releases it.
+    Other dispatch calls re-enter the same context — PydanticAI's
+    :class:`MCPServer` ref-counts entries, so the inner enter / exit
+    pairs are no-ops while the supervisor holds the outer entry.
+
+    Because anyio cancel scopes are task-bound, ``__aenter__`` and
+    ``__aexit__`` must run on the same asyncio task; the supervisor
+    pattern guarantees this. Always pair with a :meth:`shutdown` call
+    (or rely on :class:`AgentRouter` / :class:`AgentServer` lifespan,
+    which call it automatically) — otherwise the held subprocess leaks
+    until process exit."""
+
 
 class AgentRuntime:
     """The orchestration runtime.
@@ -144,6 +167,17 @@ class AgentRuntime:
         # identity is the right key (Protocol instances aren't hashable in
         # general, but our concrete is a regular class).
         self._mcp_providers: list[ToolsetProvider] = []
+        # Eager-start (mp5) bookkeeping. One supervisor task per provider
+        # holds the MCP server's context open across dispatches; the inner
+        # PA-MCP entry/exit pairs become no-ops via the upstream
+        # ``_running_count`` ref-counting. Entries keyed by ``id(provider)``
+        # because :class:`ToolsetProvider` Protocol instances aren't always
+        # hashable.
+        self._mcp_warm_events: dict[int, asyncio.Event] = {}
+        self._mcp_shutdown_events: dict[int, asyncio.Event] = {}
+        self._mcp_supervisor_tasks: dict[int, asyncio.Task[None]] = {}
+        self._mcp_supervisor_errors: dict[int, BaseException] = {}
+        self._mcp_warm_lock: asyncio.Lock | None = None
 
     @property
     def event_emitter(self) -> EventEmitter:
@@ -182,6 +216,7 @@ class AgentRuntime:
         passed to :meth:`__init__`.
         """
         resolved = self._resolve(agent)
+        await self._warm_mcp_providers(resolved)
         agent_context = AgentContext()
 
         async def dispatch_stage(
@@ -244,6 +279,7 @@ class AgentRuntime:
         if max_concurrency < 1:
             raise SpecValidationError("max_concurrency must be >= 1")
         resolved = self._resolve(agent)
+        await self._warm_mcp_providers(resolved)
 
         from murmur.events.types import EventType, RuntimeEvent
 
@@ -426,22 +462,137 @@ class AgentRuntime:
             if provider not in self._mcp_providers:
                 self._mcp_providers.append(provider)
 
+    async def _warm_mcp_providers(self, agent: Agent) -> None:
+        """Eager-start each MCP provider on the agent (mp5).
+
+        Spawns one supervisor task per provider that holds the MCP
+        server's context open until :meth:`shutdown` fires the
+        per-provider shutdown event. Inner dispatch calls
+        (``list_tools`` / ``direct_call_tool``) become no-op
+        ``__aenter__`` / ``__aexit__`` pairs via PydanticAI's upstream
+        ref-counting — the actual subprocess stays warm.
+
+        No-op when :attr:`RuntimeOptions.mcp_eager_start` is False (the
+        default — preserves the per-call respawn behaviour). Concurrent
+        first-dispatches of the same provider are deduplicated via
+        ``_mcp_warm_lock`` so we never spawn two supervisors. If the
+        first supervisor's ``provider.start()`` raises, the cached
+        exception surfaces to every concurrent waiter so they all see
+        the same failure rather than racing into a half-warmed state.
+        """
+        if not self._options.mcp_eager_start or not agent.mcp_servers:
+            return
+        if self._mcp_warm_lock is None:
+            # ``asyncio.Lock`` must be constructed inside a running loop on
+            # 3.11+; we lazy-init on first warm-up to dodge the constructor's
+            # deprecation warning when there's no current loop.
+            self._mcp_warm_lock = asyncio.Lock()
+        for provider in agent.mcp_servers:
+            await self._warm_one_provider(provider)
+
+    async def _warm_one_provider(self, provider: ToolsetProvider) -> None:
+        """Ensure exactly one supervisor task is running for ``provider``."""
+        key = id(provider)
+        # Fast path: already warm — wait on its event without lock contention.
+        if key in self._mcp_warm_events:
+            await self._mcp_warm_events[key].wait()
+            err = self._mcp_supervisor_errors.get(key)
+            if err is not None:
+                raise err
+            return
+        assert self._mcp_warm_lock is not None  # set in _warm_mcp_providers
+        async with self._mcp_warm_lock:
+            # Re-check inside the lock — another task may have just spawned it.
+            if key in self._mcp_warm_events:
+                await self._mcp_warm_events[key].wait()
+                err = self._mcp_supervisor_errors.get(key)
+                if err is not None:
+                    raise err
+                return
+            ready = asyncio.Event()
+            shutdown = asyncio.Event()
+            self._mcp_warm_events[key] = ready
+            self._mcp_shutdown_events[key] = shutdown
+            task = asyncio.create_task(
+                self._supervise_provider(provider, key, ready, shutdown),
+                name=f"murmur-mcp-supervisor-{provider.__class__.__name__}-{key}",
+            )
+            self._mcp_supervisor_tasks[key] = task
+        await ready.wait()
+        err = self._mcp_supervisor_errors.get(key)
+        if err is not None:
+            raise err
+
+    async def _supervise_provider(
+        self,
+        provider: ToolsetProvider,
+        key: int,
+        ready: asyncio.Event,
+        shutdown: asyncio.Event,
+    ) -> None:
+        """Hold ``provider`` open until ``shutdown`` is set.
+
+        Runs as its own asyncio task so ``provider.start()`` and
+        ``provider.stop()`` execute on the same task — anyio's cancel
+        scopes won't accept cross-task entry/exit. Failures during
+        ``start()`` are cached on ``_mcp_supervisor_errors[key]`` so
+        concurrent waiters see the same exception.
+        """
+        try:
+            try:
+                await provider.start()
+            except BaseException as exc:
+                self._mcp_supervisor_errors[key] = exc
+                ready.set()
+                return
+            ready.set()
+            await shutdown.wait()
+        finally:
+            with contextlib.suppress(Exception):
+                await provider.stop()
+
     async def shutdown(self) -> None:
         """Release runtime-owned resources.
 
-        Calls ``stop()`` on every MCP toolset provider seen via :meth:`run`,
-        :meth:`gather`, or :meth:`run_group` — providers that were never
-        started ignore the call. Pre-warming is opt-in (call
-        ``await provider.start()`` yourself before the first run); the
-        default per-call lifecycle is managed by PydanticAI's MCPServer
-        and needs no shutdown hook.
+        Three cleanup paths run in sequence:
 
-        Broker-mode runtimes additionally need ``await backend.stop()``;
-        :class:`AgentServer` / :class:`AgentRouter` already drive that
-        through their lifespan. ``shutdown`` is the dual for ad-hoc
-        scripts that pre-warmed providers via ``await provider.start()``.
+        1. **Eager-start supervisors (mp5)** — when
+           :attr:`RuntimeOptions.mcp_eager_start` is True, one supervisor
+           task per provider holds the MCP context open. Setting each
+           shutdown event lets the supervisors exit ``provider.stop()``
+           on the *same* task that called ``provider.start()``, which is
+           what anyio's cancel scopes require.
+        2. **Manually pre-warmed providers** — providers a user
+           pre-warmed by calling ``await provider.start()`` themselves
+           get a ``stop()`` here as a safety net. Providers in eager-start
+           mode are already stopped by their supervisor; the second
+           ``stop()`` is a no-op.
+        3. **Broker-mode runtimes** additionally need
+           ``await backend.stop()`` — :class:`AgentServer` /
+           :class:`AgentRouter` lifespan already drives that.
         """
+        # Phase 1: signal every supervisor to exit and await their cleanup.
+        # Capture the keyset BEFORE clearing so phase 2 can skip these
+        # providers (their supervisor already called stop()).
+        supervised_keys = set(self._mcp_supervisor_tasks)
+        for shutdown_event in self._mcp_shutdown_events.values():
+            shutdown_event.set()
+        for task in self._mcp_supervisor_tasks.values():
+            with contextlib.suppress(Exception):
+                await task
+        self._mcp_warm_events.clear()
+        self._mcp_shutdown_events.clear()
+        self._mcp_supervisor_tasks.clear()
+        self._mcp_supervisor_errors.clear()
+
+        # Phase 2: best-effort stop on any provider not covered by a
+        # supervisor (e.g. user pre-warmed manually before mp5 was opt-in).
+        # Filter out the supervised set — calling stop() twice is benign
+        # (start_count==0 short-circuits) but counts towards stop_count
+        # which tests assert on.
         for provider in self._mcp_providers:
+            if id(provider) in supervised_keys:
+                continue
             with contextlib.suppress(Exception):
                 await provider.stop()
 

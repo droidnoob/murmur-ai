@@ -75,8 +75,17 @@ async def build_pydantic_ai_agent(
     # forward a fresh list so post-construction mutation of the user's tuple
     # can't leak into the live PA agent (same shape as ``model_settings``).
     pa_builtin_tools = list(agent.builtin_tools)
+    # ``fallback_models`` is opt-in (empty default). When set, build a
+    # FallbackModel(default, *fallbacks) so PydanticAI's exception-driven
+    # cascade fires on ModelAPIError. Only the model wiring changes — every
+    # other option still flows to the resulting pydantic_ai.Agent.
+    pa_model: object = agent.model
+    if agent.fallback_models:
+        from pydantic_ai.models.fallback import FallbackModel
+
+        pa_model = FallbackModel(agent.model, *agent.fallback_models)
     pa_agent: pydantic_ai.Agent[None, Any] = pydantic_ai.Agent(  # ty: ignore[invalid-assignment]
-        model=agent.model,
+        model=pa_model,
         instructions=agent.instructions,
         output_type=agent.output_type,
         toolsets=pa_toolsets if pa_toolsets else None,

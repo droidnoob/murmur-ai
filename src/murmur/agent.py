@@ -61,6 +61,40 @@ class Agent(BaseModel):
 
     name: str
     model: str
+    fallback_models: tuple[str, ...] = ()
+    """Ordered fallback model names. ``()`` (default) means no fallbacks.
+
+    When non-empty, the runtime builds
+    :class:`pydantic_ai.models.fallback.FallbackModel(model, *fallback_models)`
+    at dispatch and uses it instead of ``model`` directly. The default
+    fallback trigger is :class:`pydantic_ai.ModelAPIError` (4xx / 5xx) — the
+    common "provider down / rate limited" case. Each entry is a
+    PydanticAI-style model string (``"openai:gpt-5.2"``,
+    ``"google:gemini-3-pro-preview"``, etc.); per-fallback ``ModelSettings``
+    and ``Provider`` overrides are deferred (single ``model_settings`` is
+    shared across primary + all fallbacks for now).
+
+    >>> Agent(
+    ...     name="r",
+    ...     model="anthropic:claude-sonnet-4-6",
+    ...     fallback_models=("openai:gpt-5.2",),
+    ...     ...,
+    ... )
+
+    Caveats:
+
+    - PydanticAI provider SDKs may have built-in retry logic that delays
+      fallback activation. Set ``max_retries=0`` on a custom client if you
+      need immediate fallback.
+    - All-models-failed raises :class:`pydantic_ai.FallbackExceptionGroup`
+      (an :class:`ExceptionGroup` subclass). User code that catches
+      :class:`pydantic_ai.ModelAPIError` needs ``except*`` on Python 3.11+
+      to catch through the group; Murmur's :class:`SpawnError` translation
+      at the dispatch boundary unwraps and stringifies whichever exception
+      surfaces first, so most callers don't see the group.
+    - Validation errors (structured-output retries) do **not** trigger
+      fallback — they use PydanticAI's per-model retry mechanism.
+    """
     instructions: str
     output_type: type[BaseModel]
     input_type: type[BaseModel] | None = None
