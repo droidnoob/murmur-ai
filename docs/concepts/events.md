@@ -121,6 +121,17 @@ murmur serve --port 8420 [--broker URL] [--publish-events]
 `--broker URL --publish-events` to make one `serve` process the SSE
 dashboard for an entire worker fleet via `BrokerEventBridge`.
 
+For local development, add `--reload` to auto-restart on file changes
+(uses `watchfiles`, same library as FastStream + uvicorn — install via
+`uv add 'murmur-ai[reload]'`):
+
+```bash
+murmur serve --port 8420 --reload --reload-dir ./specs --reload-dir ./src
+```
+
+Default include set is `*.py`, `*.yaml`, `*.yml`. Override with
+`--reload-include` / `--reload-exclude`.
+
 ## Distributed event bridge
 
 Without `publish_events=True`, the publisher's emitter sees only

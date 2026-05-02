@@ -68,6 +68,22 @@ murmur worker start \
     --broker kafka://kafka.prod:9092
 ```
 
+For local development, add `--reload` to auto-restart the worker on file
+changes (uses `watchfiles`, same library as FastStream + uvicorn —
+install via `uv add 'murmur-ai[reload]'`):
+
+```bash
+murmur worker start \
+    --agents researcher \
+    --broker memory:// \
+    --reload \
+    --reload-dir ./specs --reload-dir ./src
+```
+
+Defaults watch `*.py`, `*.yaml`, `*.yml` under the listed paths.
+**Don't use `--reload` in production** — restarting workers on file
+changes mid-task causes message redelivery.
+
 `Worker.start()` prints a multi-line Murmur banner to stderr with
 broker, runtime id, agents, per-agent topics, and concurrency. The
 banner uses `sys.stderr` directly so the layout survives structlog

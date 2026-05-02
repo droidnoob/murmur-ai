@@ -56,6 +56,13 @@ redis-runstore = ["redis>=5"]
 
 container = ["docker==7.1.0"]
 
+# Dev-only auto-reload for ``murmur serve --reload`` and
+# ``murmur worker start --reload``. Wraps watchfiles, which is also what
+# FastStream's CLI and uvicorn use under the hood — same library, same
+# semantics. Not pulled into core because production deployments should
+# not auto-restart on file changes.
+reload = ["watchfiles>=0.20,<2"]
+
 [project.scripts]
 murmur = "murmur.cli:main"
 
@@ -97,6 +104,10 @@ dev = [
     # In-memory Redis with stream + scripting support; lets RedisRunStore's
     # contract suite run without Docker.
     "fakeredis[lua]>=2.30,<3",
+    # Powers ``murmur serve --reload`` / ``murmur worker start --reload``.
+    # Pulled into dev so the reload helper's tests run without the [reload]
+    # extra installed.
+    "watchfiles>=0.20,<2",
 ]
 
 # Docs build — kept separate so user installs and the dev test suite never

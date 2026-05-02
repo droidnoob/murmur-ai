@@ -101,10 +101,57 @@ def register_serve(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> 
         action="store_true",
         help="Disable the GET /events/stream endpoint entirely.",
     )
+    p.add_argument(
+        "--reload",
+        action="store_true",
+        help=(
+            "Watch --reload-dir paths and restart the server on file changes. "
+            "Requires the [reload] extra (watchfiles). Dev-only — production "
+            "deployments should not use this."
+        ),
+    )
+    p.add_argument(
+        "--reload-dir",
+        type=Path,
+        action="append",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Directory to watch for changes. May be repeated. Default: "
+            "--specs and the current working directory."
+        ),
+    )
+    p.add_argument(
+        "--reload-include",
+        action="append",
+        default=None,
+        metavar="GLOB",
+        help=(
+            "Filename glob to include in reload watching (default: *.py, "
+            "*.yaml, *.yml). May be repeated."
+        ),
+    )
+    p.add_argument(
+        "--reload-exclude",
+        action="append",
+        default=None,
+        metavar="GLOB",
+        help="Filename glob to exclude from reload watching. May be repeated.",
+    )
     p.set_defaults(handler=_start)
 
 
 def _start(args: argparse.Namespace) -> int:
+    if getattr(args, "reload", False):
+        from murmur.cli._reload import is_reload_child, reload_wrap
+
+        if not is_reload_child():
+            reload_dirs = args.reload_dir or [args.specs, Path.cwd()]
+            return reload_wrap(
+                reload_dirs=reload_dirs,
+                includes=args.reload_include,
+                excludes=args.reload_exclude,
+            )
     return asyncio.run(_run_serve(args))
 
 

@@ -60,10 +60,57 @@ def register_worker(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     )
     start.add_argument("--concurrency", type=int, default=10)
     start.add_argument("--prefetch", type=int, default=5)
+    start.add_argument(
+        "--reload",
+        action="store_true",
+        help=(
+            "Watch --reload-dir paths and restart the worker on file changes. "
+            "Requires the [reload] extra (watchfiles). Dev-only — production "
+            "deployments should not use this."
+        ),
+    )
+    start.add_argument(
+        "--reload-dir",
+        type=Path,
+        action="append",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Directory to watch for changes. May be repeated. Default: "
+            "--specs and the current working directory."
+        ),
+    )
+    start.add_argument(
+        "--reload-include",
+        action="append",
+        default=None,
+        metavar="GLOB",
+        help=(
+            "Filename glob to include in reload watching (default: *.py, "
+            "*.yaml, *.yml). May be repeated."
+        ),
+    )
+    start.add_argument(
+        "--reload-exclude",
+        action="append",
+        default=None,
+        metavar="GLOB",
+        help="Filename glob to exclude from reload watching. May be repeated.",
+    )
     start.set_defaults(handler=_start)
 
 
 def _start(args: argparse.Namespace) -> int:
+    if getattr(args, "reload", False):
+        from murmur.cli._reload import is_reload_child, reload_wrap
+
+        if not is_reload_child():
+            reload_dirs = args.reload_dir or [args.specs, Path.cwd()]
+            return reload_wrap(
+                reload_dirs=reload_dirs,
+                includes=args.reload_include,
+                excludes=args.reload_exclude,
+            )
     return asyncio.run(_run_worker(args))
 
 
