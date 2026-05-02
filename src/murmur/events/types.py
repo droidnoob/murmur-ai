@@ -109,8 +109,17 @@ class RuntimeEvent(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     event_type: EventType
+    """Discriminator. Determines what payload shape callers should expect —
+    see :class:`EventType` value docstrings for the per-type payload contract."""
+
     timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    """UTC timestamp of the event. Set at the emission point inside the
+    runtime; not the timestamp the emitter delivered to its sink."""
+
     agent_name: str
+    """Name of the :class:`Agent` the event is about — or the dispatching
+    agent's name for batch / group / tool-call events."""
+
     task_id: str | None = None
     """``None`` for non-task events (BATCH_STARTED, GROUP_STARTED, etc.)."""
 

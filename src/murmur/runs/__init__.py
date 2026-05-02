@@ -55,9 +55,19 @@ class RunProgress(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     total: int = 0
+    """Total number of agent invocations expected for the run. ``0`` until
+    the runner knows the count (e.g. after fan-out resolution)."""
+
     completed: int = 0
+    """Successfully completed invocations so far."""
+
     failed: int = 0
+    """Failed invocations so far. A run can finish in
+    :attr:`RunState.COMPLETED` with non-zero ``failed`` if the topology
+    tolerates partial failure."""
+
     running: int = 0
+    """Currently in-flight invocations."""
 
 
 class RunStatus(BaseModel):
@@ -66,16 +76,33 @@ class RunStatus(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     run_id: str
+    """The id returned by ``POST /submit``. Echoed back here so this status
+    object stands alone."""
+
     state: RunState
+    """Coarse-grained lifecycle state. See :class:`RunState`."""
+
     progress: RunProgress | None = None
+    """Counter snapshot. ``None`` until the runner reports the first update."""
 
 
 class RunEventType(StrEnum):
+    """Discriminator for :class:`RunEvent` instances on the SSE stream."""
+
     AGENT_STARTED = "agent_started"
+    """An agent invocation began. Payload: ``agent``, ``task_id``."""
+
     AGENT_COMPLETED = "agent_completed"
+    """An agent invocation finished successfully. Payload: ``agent``, ``task_id``."""
+
     AGENT_FAILED = "agent_failed"
+    """An agent invocation raised. Payload: ``agent``, ``task_id``, ``error``."""
+
     GROUP_COMPLETED = "group_completed"
+    """The whole :class:`AgentGroup` run finished — terminal."""
+
     RUN_CANCELLED = "run_cancelled"
+    """The run was cancelled by a client request — terminal."""
 
 
 class RunEvent(BaseModel):
@@ -84,11 +111,25 @@ class RunEvent(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     type: RunEventType
+    """Discriminator. See :class:`RunEventType` for per-type payload contracts."""
+
     run_id: str
+    """Run id this event belongs to. Always present so events stand alone
+    when serialised."""
+
     agent: str | None = None
+    """The :class:`Agent` name involved, when relevant.
+    ``None`` for run-level events (``GROUP_COMPLETED``, ``RUN_CANCELLED``)."""
+
     task_id: str | None = None
+    """The :class:`TaskSpec` id, when the event is about one task in
+    particular. ``None`` for run-level events."""
+
     error: str | None = None
+    """Stringified error message — populated only on :data:`AGENT_FAILED`."""
+
     timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    """UTC time of emission."""
 
 
 # ---------------------------------------------------------------------------

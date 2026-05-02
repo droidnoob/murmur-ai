@@ -71,7 +71,16 @@ class AgentGroup:
     """
 
     name: str
+    """Stable identifier — used as the registry key, the broker topic suffix
+    for group-level events, and the ``agent_name`` field on
+    :data:`EventType.GROUP_*` events."""
+
     topology: Mapping[Agent, EdgeOrEdges] = field(default_factory=dict)
+    """The DAG. Keys are :class:`Agent` instances; each value is one
+    :class:`Edge` (most common) or a tuple of edges for branch routing
+    with :attr:`Edge.condition` predicates. Validated at construction —
+    cycles, dangling refs, and missing entry / terminal nodes raise
+    :class:`TopologyError`."""
 
     def __post_init__(self) -> None:
         if not self.topology:

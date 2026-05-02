@@ -104,11 +104,24 @@ class Agent(BaseModel):
       fallback — they use PydanticAI's per-model retry mechanism.
     """
     instructions: str
+    """System prompt forwarded to PydanticAI as the agent's ``system_prompt``.
+    Plain string — variable interpolation happens upstream of construction
+    (e.g. before the YAML loader resolves the spec)."""
+
     output_type: type[BaseModel]
+    """Pydantic model class the agent's output is validated against.
+    PydanticAI re-prompts on validation failure up to its built-in retry
+    budget; the runtime surfaces a final failure as
+    :class:`SpawnError`."""
+
     input_type: type[BaseModel] | None = None
     """Optional structured input type. ``None`` = the agent takes a plain string."""
 
     tools: frozenset[str] = Field(default_factory=frozenset)
+    """Native tool names registered in the runtime's :class:`ToolRegistry`.
+    Each call flows through :class:`ToolExecutor` for trust gating, allow-list
+    filtering, and ``TOOL_CALL_*`` lifecycle events. Frozen — the agent's tool
+    set is fixed at construction; use :meth:`with_` to derive a variant."""
 
     mcp_servers: tuple[ToolsetProvider, ...] = ()
     """Remote toolset providers — tools discovered at dispatch time.
@@ -172,8 +185,22 @@ class Agent(BaseModel):
     """
 
     trust_level: TrustLevel = TrustLevel.MEDIUM
+    """Tool-access policy. Drives :class:`ToolExecutor`'s gate (allow-list for
+    LOW, full set for MEDIUM/HIGH, no tools for SANDBOX) and — once Phase 4
+    lands — backend selection (SANDBOX agents always run via
+    ``ContainerBackend``)."""
+
     context_passer: ContextPasser = Field(default_factory=NullContextPasser)
+    """Policy deciding what conversation history flows into a spawn.
+    :class:`NullContextPasser` (default) hands the agent a fresh context;
+    :class:`FullContextPasser` forwards everything. Phase 3 adds
+    ``SummaryContextPasser`` and ``SelectiveContextPasser``."""
+
     backend: str = "auto"
+    """Routing hint for :class:`AgentRuntime` to pick a :class:`Backend`.
+    ``"auto"`` (default) defers to the runtime's configured backend
+    (typically ThreadBackend in local mode, JobBackend when a broker URL was
+    supplied). Reserved for future overrides — currently informational."""
 
     pre_process: tuple[ProcessHook, ...] = ()
     """Hooks applied left-to-right to the input before the LLM call.

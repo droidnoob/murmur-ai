@@ -71,6 +71,9 @@ class TaskSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    """Per-task UUID. Auto-generated; collisions on the broker results topic
+    are correlated by this value."""
+
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     """Correlates one logical request across logs / broker messages / HTTP.
 
@@ -79,7 +82,14 @@ class TaskSpec(BaseModel):
     """
 
     input: str
+    """The agent's input — a plain string, or a JSON-serialised structure when
+    ``Agent.input_type`` is set (the runtime decodes against the agent's
+    declared input type at dispatch)."""
+
     metadata: Mapping[str, str] = Field(default_factory=dict)
+    """Free-form string-to-string metadata. Surfaces on every emitted
+    ``RuntimeEvent`` and on the broker wire envelope; use for tenant /
+    customer / trace tags. Frozen at construction."""
 
 
 class ResultMetadata(BaseModel):
@@ -88,10 +98,25 @@ class ResultMetadata(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     duration_ms: int = 0
+    """Wall-clock time from spawn to result, in milliseconds."""
+
     tokens_used: int = 0
+    """Total tokens consumed (request + response + provider-side built-in
+    tool tokens). Driver behind :class:`CostTrackingMiddleware`'s
+    post-charge."""
+
     cost_usd: float = 0.0
+    """Best-effort USD cost computed from ``tokens_used`` and the model's
+    published rates. ``0.0`` when rates aren't known for the model in use."""
+
     backend: str = ""
+    """Class name of the :class:`Backend` that ran the agent (e.g.
+    ``"ThreadBackend"``, ``"JobBackend"``). Empty until populated by the
+    backend's result path."""
+
     trace_id: str | None = None
+    """Same value as ``TaskSpec.request_id`` for the run that produced this
+    result — populated when available. ``None`` for synthetic results."""
 
 
 class AgentResult(BaseModel, Generic[T]):
@@ -104,10 +129,24 @@ class AgentResult(BaseModel, Generic[T]):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     output: T | None = None
+    """The agent's structured output, validated against
+    ``Agent.output_type``. ``None`` when ``error`` is set."""
+
     error: BaseException | None = None
+    """The exception that caused the run to fail. ``None`` on success.
+    Always a :class:`MurmurError` subclass when raised by the runtime;
+    user-tool exceptions wrap in :class:`ToolExecutionError`."""
+
     metadata: ResultMetadata = Field(default_factory=ResultMetadata)
+    """Per-result diagnostics — duration, tokens, cost, backend, trace_id."""
+
     agent_name: str
+    """Name of the :class:`Agent` that produced this result. Mirrors
+    ``Agent.name``."""
+
     task_id: str
+    """The originating ``TaskSpec.id`` — correlates a result back to its
+    request."""
 
     def is_ok(self) -> bool:
         """``True`` if the agent succeeded and ``output`` is populated."""
@@ -120,9 +159,16 @@ class AgentHandle(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     handle_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    """Backend-issued UUID. Treated as opaque by callers."""
+
     agent_name: str
+    """Mirrors ``Agent.name`` for the spawned run."""
+
     task_id: str
+    """Mirrors ``TaskSpec.id`` for the dispatched task."""
+
     backend: str
+    """Class name of the :class:`Backend` that issued this handle."""
 
 
 class AgentContext(BaseModel):
@@ -137,9 +183,25 @@ class AgentContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     messages: tuple[Mapping[str, str], ...] = Field(default_factory=tuple)
+    """Conversation history forwarded into the spawn. Each entry is a
+    ``{"role": "user"|"assistant"|"system", "content": str}`` mapping.
+    Empty tuple = fresh context. The :class:`ContextPasser` chosen on the
+    agent decides what fills this on each spawn."""
+
     parent_agent: str | None = None
+    """Name of the agent that spawned this run, when this is a sub-spawn.
+    ``None`` for top-level runs. Phase 4 ties this to cascading-spawn
+    cycle detection."""
+
     depth: int = 0
+    """Cascading-spawn depth. ``0`` for top-level runs; incremented per
+    sub-spawn. :class:`DepthLimitMiddleware` rejects when this reaches
+    ``RuntimeOptions.max_spawn_depth``."""
+
     metadata: Mapping[str, str] = Field(default_factory=dict)
+    """Free-form context metadata, threaded through to the spawned agent.
+    Distinct from ``TaskSpec.metadata`` — that's per-task; this is
+    per-context."""
 
 
 __all__ = [
