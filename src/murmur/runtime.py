@@ -21,7 +21,7 @@ import contextlib
 import contextvars
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
@@ -129,6 +129,28 @@ class RuntimeOptions(BaseModel):
     catches up. Use it as an explicit opt-in safety rail (e.g. tests that
     exercise the cap, or short-lived process boundaries) — leave it
     ``None`` for any runtime that handles ongoing traffic."""
+
+    cycle_policy: Literal["strict", "permissive"] = "strict"
+    """Cycle-detection policy for cascading sub-spawns.
+
+    ``"strict"`` (default) rejects any ``runtime.run`` / ``runtime.gather``
+    whose target ``Agent.name`` already appears on the parent chain
+    (ancestors + immediate parent), raising :class:`SpawnCycleError`
+    before any backend work. This is the safe default — bounded reuse
+    patterns like ``reviewer → fact_checker → reviewer`` are
+    structurally indistinguishable from runaway recursion at the
+    runtime level, and most callers want the guard.
+
+    ``"permissive"`` skips the cycle check entirely. **Termination
+    becomes the caller's responsibility** — typically by tracking
+    iteration counts in tool arguments / agent inputs, or by relying
+    on :attr:`max_spawn_depth` and :attr:`max_total_spawns`, both of
+    which remain enforced regardless of this setting. Use this when a
+    legitimate workflow needs the same registered agent name to recur
+    on the chain (e.g. a critic loop with an explicit external
+    counter); avoid it on any runtime that runs untrusted prompts or
+    where bugs in tool plumbing could let an LLM ask for the same
+    agent forever."""
 
     retry_max_attempts: int = 1
     """``1`` (default) means no retry. Set to ``2+`` to enable
@@ -314,15 +336,20 @@ class AgentRuntime:
         that's the runaway case we want to catch. If a workflow needs the
         same logic at a deeper level, give the deeper instance a distinct
         name (``worker-rev2`` etc.) — that disambiguates intent and keeps
-        the cycle guard meaningful.
+        the cycle guard meaningful. For workflows that genuinely require
+        bounded reuse of a single registered name on the chain, opt into
+        :attr:`RuntimeOptions.cycle_policy` ``"permissive"`` and own
+        termination yourself (depth + cap remain enforced).
         """
         resolved = self._resolve(agent)
         await self._warm_mcp_providers(resolved)
 
         # Cycle: name already on the parent chain → reject before claiming
-        # a spawn slot or warming any backend state.
+        # a spawn slot or warming any backend state. Chain computation
+        # stays unconditional so depth / ancestors propagation below
+        # is identical across both policies — only the raise is gated.
         parent_frame = _current_spawn.get()
-        if parent_frame is not None:
+        if parent_frame is not None and self._options.cycle_policy == "strict":
             chain = parent_frame.agent_context.ancestors | {parent_frame.agent_name}
             if resolved.name in chain:
                 raise SpawnCycleError(
@@ -505,8 +532,11 @@ class AgentRuntime:
 
         # Cycle: same name in-chain rule that ``run`` enforces. Reject before
         # claiming any slots so the cap stays honest on cycle rejection.
+        # Chain computation stays unconditional so per-slot depth /
+        # ancestors propagation below is identical across both policies —
+        # only the raise is gated by ``cycle_policy``.
         parent_frame = _current_spawn.get()
-        if parent_frame is not None:
+        if parent_frame is not None and self._options.cycle_policy == "strict":
             chain = parent_frame.agent_context.ancestors | {parent_frame.agent_name}
             if resolved.name in chain:
                 raise SpawnCycleError(

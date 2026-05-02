@@ -232,6 +232,109 @@ async def test_non_cycle_sibling_not_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
+# cycle_policy — opt-in permissive escape hatch for bounded reuse patterns.
+# Strict (the default) is covered by the tests above; here we verify that
+# permissive disables the raise without disabling the surrounding guards.
+# ---------------------------------------------------------------------------
+
+
+def test_cycle_policy_default_is_strict() -> None:
+    """``RuntimeOptions().cycle_policy`` defaults to ``"strict"`` so existing
+    callers never silently lose the guard."""
+    assert RuntimeOptions().cycle_policy == "strict"
+
+
+@pytest.mark.asyncio
+async def test_cycle_policy_permissive_allows_direct_reentrance() -> None:
+    """A → A succeeds when ``cycle_policy="permissive"``."""
+    rt = AgentRuntime(options=RuntimeOptions(cycle_policy="permissive"))
+    parent_frame = _SpawnFrame(
+        agent_name="alpha", agent_context=AgentContext(), trace_id="t1"
+    )
+    token = _current_spawn.set(parent_frame)
+    try:
+        result = await rt.run(_agent("alpha"), TaskSpec(input="x"))
+    finally:
+        _current_spawn.reset(token)
+    assert result.is_ok()
+
+
+@pytest.mark.asyncio
+async def test_cycle_policy_permissive_allows_transitive_cycle() -> None:
+    """A → B → A succeeds when ``cycle_policy="permissive"``."""
+    rt = AgentRuntime(options=RuntimeOptions(cycle_policy="permissive"))
+    parent_ctx = AgentContext(ancestors=frozenset({"alpha"}))
+    parent_frame = _SpawnFrame(
+        agent_name="beta", agent_context=parent_ctx, trace_id="t2"
+    )
+    token = _current_spawn.set(parent_frame)
+    try:
+        result = await rt.run(_agent("alpha"), TaskSpec(input="x"))
+    finally:
+        _current_spawn.reset(token)
+    assert result.is_ok()
+
+
+@pytest.mark.asyncio
+async def test_cycle_policy_permissive_still_enforces_depth_limit() -> None:
+    """``cycle_policy="permissive"`` is *only* about cycle detection — the
+    depth limit remains the user's primary termination guarantee and must
+    keep firing. Regression test: a permissive policy that accidentally
+    short-circuited the rest of the cascading-spawn graph computation
+    would let an A → A loop dodge ``DepthLimitMiddleware`` too."""
+    rt = AgentRuntime(
+        options=RuntimeOptions(cycle_policy="permissive", max_spawn_depth=2)
+    )
+    # Parent already at depth=1; child = depth=2 → at the cap → reject.
+    parent_ctx = AgentContext(depth=1)
+    parent_frame = _SpawnFrame(
+        agent_name="alpha", agent_context=parent_ctx, trace_id="t"
+    )
+    token = _current_spawn.set(parent_frame)
+    try:
+        with pytest.raises(DepthLimitError):
+            # Same name → would be a strict-mode cycle, but depth fires first.
+            await rt.run(_agent("alpha"), TaskSpec(input="x"))
+    finally:
+        _current_spawn.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_cycle_policy_permissive_still_enforces_spawn_cap() -> None:
+    """``max_total_spawns`` keeps tripping under permissive cycle policy.
+    A bounded reuse loop still needs the kill switch to fire eventually."""
+    rt = AgentRuntime(
+        options=RuntimeOptions(cycle_policy="permissive", max_total_spawns=2)
+    )
+    a = _agent("alpha")
+    # Top-level runs — no parent frame, no cycle even under strict — used
+    # here purely to exhaust the cap; the point is that permissive doesn't
+    # disable cap enforcement.
+    await rt.run(a, TaskSpec(input="1"))
+    await rt.run(a, TaskSpec(input="2"))
+    assert rt.spawn_count == 2
+    with pytest.raises(SpawnCapError):
+        await rt.run(a, TaskSpec(input="3"))
+
+
+@pytest.mark.asyncio
+async def test_cycle_policy_permissive_allows_cycle_in_gather() -> None:
+    """``runtime.gather`` mirrors ``runtime.run``: permissive disables the
+    cycle raise on the batch-entry path too."""
+    rt = AgentRuntime(options=RuntimeOptions(cycle_policy="permissive"))
+    parent_frame = _SpawnFrame(
+        agent_name="alpha", agent_context=AgentContext(), trace_id="t"
+    )
+    token = _current_spawn.set(parent_frame)
+    try:
+        results = await rt.gather(_agent("alpha"), [TaskSpec(input="x")])
+    finally:
+        _current_spawn.reset(token)
+    assert len(results) == 1
+    assert results[0].is_ok()
+
+
+# ---------------------------------------------------------------------------
 # Per-runtime spawn cap.
 # ---------------------------------------------------------------------------
 

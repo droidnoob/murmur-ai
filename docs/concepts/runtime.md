@@ -98,6 +98,7 @@ runtime = AgentRuntime(
 | `retry_max_attempts` | `1` | Retries on `SpawnError`. `1` = no retry. |
 | `max_spawn_depth` | `4` | Max cascading spawn depth — see [Cascading spawns](#cascading-spawns). |
 | `max_total_spawns` | `None` | Optional per-runtime kill switch on total dispatches — see [Cascading spawns](#cascading-spawns). |
+| `cycle_policy` | `"strict"` | Cycle-detection mode for cascading sub-spawns. `"permissive"` skips the same-name-on-chain rejection — see [Cascading spawns](#cascading-spawns). |
 | `token_budget` | `None` | If set, wires `CostTrackingMiddleware`. See [Cost](cost.md). |
 | `mcp_eager_start` | `False` | If set, holds MCP subprocesses warm across runs. See [MCP](mcp.md). |
 | `broker_signing_key` | `None` | If set, signs outbound `TaskMessage` envelopes — see [Authenticated broker envelopes](#authenticated-broker-envelopes). |
@@ -117,7 +118,8 @@ guards keep an over-eager LLM from running away with the cluster:
   agent names on `AgentContext.ancestors`. If a child's name already
   appears on that chain, `runtime.run` raises `SpawnCycleError` before
   any backend work — A → B → A reentry never executes. No graph store
-  is needed; the ancestor set propagates per-run.
+  is needed; the ancestor set propagates per-run. Set
+  `RuntimeOptions.cycle_policy="permissive"` to opt out (see below).
 - **Per-runtime spawn cap.** `RuntimeOptions.max_total_spawns`
   (default `None` — unbounded) is an opt-in kill switch on total
   dispatches over the runtime's lifetime. Set it to a finite value
@@ -128,6 +130,25 @@ guards keep an over-eager LLM from running away with the cluster:
   runtime will eventually self-brick. Use this independently of
   `token_budget` to catch runaway cascades before the cost meter
   does.
+
+`cycle_policy` defaults to `"strict"` — the behaviour above. Some
+workflows legitimately reuse the same registered agent name on the
+chain (a critic loop where `reviewer → fact_checker → reviewer` is
+the *intended* shape, not a bug). For those, set `cycle_policy=
+"permissive"` and the runtime stops raising `SpawnCycleError`:
+
+```python
+runtime = AgentRuntime(options=RuntimeOptions(cycle_policy="permissive"))
+```
+
+Permissive puts termination on **you** — the runtime no longer
+guarantees the chain is finite. The depth limit and spawn cap remain
+enforced regardless of policy, so wire one of them as your
+backstop and add an explicit termination signal in your tool surface
+(e.g. a `revisions_remaining: int` argument the model decrements
+each pass and short-circuits at zero). Don't enable permissive on a
+runtime that handles untrusted prompts unless you're certain a
+bounded counter is reachable from every code path.
 
 Children also inherit a `parent_trace_id` field on every
 `RuntimeEvent`, so observability backends can stitch a cascading run
