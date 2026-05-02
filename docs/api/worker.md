@@ -1,7 +1,7 @@
 # Worker
 
 Distributed broker consumer. One process subscribes to per-agent task
-topics, dispatches each `TaskMessage` through an internal thread-mode
+topics, dispatches each `TaskMessage` through an internal in-process
 `AgentRuntime`, and publishes `ResultMessage` envelopes back on the
 agent's results topic.
 

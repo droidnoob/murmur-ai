@@ -8,7 +8,7 @@ so structured logs keep flowing alongside).
 
 CLI shape::
 
-    murmur serve --specs ./specs                                    # local thread-mode
+    murmur serve --specs ./specs                                    # local in-process
     murmur serve --specs ./specs --broker kafka://host:9092         # broker dispatch
     murmur serve --specs ./specs --broker kafka://… --publish-events
                                                                     # also receive
@@ -73,7 +73,7 @@ def register_serve(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> 
         default=None,
         help=(
             "Broker URL (kafka://host:port, nats://, amqp://, redis://, or "
-            "memory://). Omit to run in thread-mode — no distributed dispatch."
+            "memory://). Omit to run in in-process — no distributed dispatch."
         ),
     )
     p.add_argument(
@@ -138,6 +138,16 @@ def register_serve(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> 
         metavar="GLOB",
         help="Filename glob to exclude from reload watching. May be repeated.",
     )
+    p.add_argument(
+        "--uvloop",
+        action="store_true",
+        help=(
+            "Use uvloop for the asyncio event loop (POSIX only). Requires "
+            "the [uvloop] extra. Equivalent to MURMUR_USE_UVLOOP=1. Falls "
+            "back to the default loop with a warning on Windows or when "
+            "the extra isn't installed."
+        ),
+    )
     p.set_defaults(handler=_start)
 
 
@@ -152,6 +162,9 @@ def _start(args: argparse.Namespace) -> int:
                 includes=args.reload_include,
                 excludes=args.reload_exclude,
             )
+    from murmur.cli._uvloop import install_uvloop_policy, resolve_uvloop_enabled
+
+    install_uvloop_policy(resolve_uvloop_enabled(getattr(args, "uvloop", False)))
     return asyncio.run(_run_serve(args))
 
 

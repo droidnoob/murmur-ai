@@ -15,7 +15,7 @@ PydanticAI handles single-agent execution well. What it doesn't give you:
   Murmur emits a typed `RuntimeEvent`. PydanticAI logs through its own
   channels but doesn't ship a swappable emitter Protocol.
 - **Distributed dispatch.** `AgentRuntime(broker="kafka://…")` swaps
-  ThreadBackend for JobBackend with no code changes to the agent.
+  AsyncBackend for JobBackend with no code changes to the agent.
   PydanticAI is in-process only.
 - **Structured fan-out.** `runtime.gather`, `AgentGroup`, `Edge` topology
   with mappers and `FanOut` typing — primitives PydanticAI doesn't ship.
@@ -107,11 +107,10 @@ fires before dispatch once exhausted, with a `BUDGET_EXCEEDED`
 - Output schemas — Murmur reuses your Pydantic models verbatim.
 - Tool definitions — wrap any `async def` and register it; PydanticAI's
   schema introspection still works because Murmur preserves
-  `__signature__` via `functools.wraps` (decision D2).
+  `__signature__` via `functools.wraps`.
 - Provider auth — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc. resolved
   the same way as PydanticAI.
-- `agent.run_stream` semantics — once `runtime.run_stream` ships
-  ([`murmur-ai-4oe`](https://github.com/murmur-ai/murmur/issues), the
+- `agent.run_stream` semantics — once `runtime.run_stream` ships, the
   underlying PydanticAI streaming primitives carry through.
 
 ## Incremental adoption path

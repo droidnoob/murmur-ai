@@ -39,9 +39,9 @@ def test_invalid_broker_scheme_rejected() -> None:
         AgentRuntime(broker="ftp://example.com")
 
 
-def test_no_broker_picks_thread_backend() -> None:
+def test_no_broker_picks_async_backend() -> None:
     runtime = AgentRuntime()
-    assert runtime.backend.__class__.__name__ == "ThreadBackend"
+    assert runtime.backend.__class__.__name__ == "AsyncBackend"
 
 
 def test_kafka_broker_picks_job_backend() -> None:

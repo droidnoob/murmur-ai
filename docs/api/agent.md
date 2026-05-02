@@ -9,6 +9,7 @@ from murmur import (
     AgentContext,
     AgentHandle,
     AgentResult,
+    AgentTemplate,
     ResultMetadata,
     TaskSpec,
     TrustLevel,
@@ -18,6 +19,13 @@ from murmur import (
 ## `Agent`
 
 ::: murmur.Agent
+    options:
+      heading_level: 3
+      show_bases: false
+
+## `AgentTemplate`
+
+::: murmur.AgentTemplate
     options:
       heading_level: 3
       show_bases: false

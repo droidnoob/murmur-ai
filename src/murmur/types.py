@@ -111,7 +111,7 @@ class ResultMetadata(BaseModel):
 
     backend: str = ""
     """Class name of the :class:`Backend` that ran the agent (e.g.
-    ``"ThreadBackend"``, ``"JobBackend"``). Empty until populated by the
+    ``"AsyncBackend"``, ``"JobBackend"``). Empty until populated by the
     backend's result path."""
 
     trace_id: str | None = None

@@ -27,7 +27,7 @@ from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
 from murmur.backends._faststream_broker import FastStreamBroker
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.runtime import AgentRuntime
 from murmur.types import TaskSpec, TrustLevel
@@ -87,7 +87,7 @@ def _stub_pa_factory() -> Any:
 
 
 def _worker_runtime() -> AgentRuntime:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = _stub_pa_factory()  # noqa: SLF001
     return AgentRuntime(backend=backend)
 

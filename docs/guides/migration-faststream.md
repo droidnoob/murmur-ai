@@ -56,7 +56,7 @@ researcher = Agent(
     output_type=ResearchFinding,
 )
 
-runtime = AgentRuntime()                               # thread-mode internally
+runtime = AgentRuntime()                               # in-process internally
 worker = Worker(
     runtime=runtime,
     broker="kafka://localhost:9092",
@@ -71,7 +71,7 @@ Murmur generates the per-agent task topic + `{agent}.results` reply topic
 automatically. The wire envelope (`TaskMessage` / `ResultMessage`) is
 defined in `murmur.messages` — primitive fields (`success: bool`,
 `output_payload: dict`, `error_message: str`) so generic `BaseModel`
-serialisation isn't a problem (decision D15).
+serialisation isn't a problem.
 
 ### Expose a Murmur agent as a FastStream handler
 
@@ -145,9 +145,9 @@ you'd wire each one manually.
 - **Topic naming** can be customised (Murmur defaults to
   `murmur.{agent_name}.tasks` and `murmur.{agent_name}.results`).
 - **Existing FastStream middleware** continues to work for transport
-  concerns; Murmur's pipeline middleware sits at a different layer (see
-  decision D23 — "two distinct middleware systems exist; don't conflate
-  them").
+  concerns; Murmur's pipeline middleware sits at a different layer —
+  the two are layered (broker → pipeline → backend dispatch → result),
+  not interchangeable.
 
 ## Incremental adoption path
 

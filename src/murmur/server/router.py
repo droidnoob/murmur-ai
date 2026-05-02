@@ -95,9 +95,9 @@ class AgentRouter(APIRouter):
             sse_emitter=sse_emitter,
         )
         self._start_workers = start_workers
-        # The worker's runtime MUST be thread-mode — broker-mode would
+        # The worker's runtime MUST be in-process — broker-mode would
         # re-publish each consumed task and infinite-loop. ``Worker``
-        # defaults to a fresh ``AgentRuntime()`` (thread-mode) when
+        # defaults to a fresh ``AgentRuntime()`` (in-process) when
         # ``runtime=None`` is forwarded; advanced users override via
         # ``worker_runtime=`` to inject custom tools / middleware /
         # test-model factories without disturbing the publishing runtime.
@@ -149,7 +149,7 @@ class AgentRouter(APIRouter):
 
         Treated as a documented re-export of FastStream's broker; consult
         the FastStream docs for its full API. Returns ``None`` when the
-        runtime is thread-mode or when the broker is the in-memory testing
+        runtime is in-process or when the broker is the in-memory testing
         broker (which has no FastStream surface).
 
         For "bring your own broker" (the user already has a configured
@@ -182,13 +182,13 @@ FastStreamBroker` (the ``_fs_broker=`` constructor seam).
         ``self.lifespan_context``, so users access it as
         ``router.lifespan_context`` (no extra property on our side).
 
-        - **Thread-mode runtime**: nothing to start; ``start_workers`` is a
+        - **In-process runtime**: nothing to start; ``start_workers`` is a
           no-op.
         - **Broker-mode runtime**: starts the underlying broker so HTTP
           handlers can publish. If ``start_workers=True`` (default), also
           spins up an in-process :class:`murmur.worker.Worker` subscribed
           to all currently-registered agents. The worker's runtime is
-          thread-mode (per the gotcha that broker-mode workers re-publish
+          in-process (per the gotcha that broker-mode workers re-publish
           and loop) so its registry handler executes locally and publishes
           results back through the same broker.
 
@@ -208,7 +208,7 @@ FastStreamBroker` (the ``_fs_broker=`` constructor seam).
 
         backend = self._server.runtime.backend
         if not isinstance(backend, JobBackend):
-            # Thread-mode: nothing to start.
+            # In-process: nothing to start.
             return
 
         # Broker-mode: start the broker so /agents/{name}/run can publish.

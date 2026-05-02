@@ -2,7 +2,7 @@
 
 The server holds:
 
-- a :class:`murmur.AgentRuntime` (configured for either local thread-mode or
+- a :class:`murmur.AgentRuntime` (configured for either local in-process or
   broker-mode, transparently to the user),
 - a registry of agents and (optionally) :class:`murmur.AgentGroup` instances,
 - an :class:`murmur.runs.InMemoryRunStore` for the submit/poll/stream pattern,
@@ -44,10 +44,12 @@ from murmur.types import AgentResult, TaskSpec
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import Literal
 
     from murmur.agent import Agent
     from murmur.events.sse import SSEEventEmitter
     from murmur.groups.spec import AgentGroup
+    from murmur.mcp_server import MCPEnrollment
     from murmur.runs import RunStore
     from murmur.runtime import AgentRuntime
 
@@ -111,6 +113,12 @@ class AgentServer:
         # ``None`` to opt out — embedded mounts that don't want a public
         # event firehose just leave this off.
         self._sse_emitter: SSEEventEmitter | None = sse_emitter
+        # MCP exposure is opt-in at two levels: ``register_mcp`` enrolls a
+        # specific agent; ``serve_mcp`` activates the surface. ``register``
+        # alone (HTTP-only) does NOT touch this dict, so an agent registered
+        # for HTTP is invisible to MCP clients unless the operator explicitly
+        # opts in.
+        self._mcp_enrollments: dict[str, MCPEnrollment] = {}
         self._active_runs: set[str] = set()
         self._shutting_down: bool = False
         self._app: FastAPI = self._build_app()
@@ -135,6 +143,97 @@ class AgentServer:
         for a in group.agents:
             self._agents.setdefault(a.name, a)
         self._groups[group.name] = group
+
+    # ------------------------------------------------------------------ MCP
+
+    def register_mcp(
+        self,
+        agent: Agent,
+        *,
+        tool_name: str | None = None,
+        description: str | None = None,
+    ) -> None:
+        """Enroll an agent for MCP exposure — opt-in, distinct from
+        :meth:`register`.
+
+        ``register()`` makes an agent reachable over HTTP; this method
+        additionally exposes it as an MCP tool that clients (Claude
+        Desktop, Cursor, MCP Inspector, …) call once :meth:`serve_mcp`
+        is running. Agents registered only with ``register()`` stay
+        invisible to MCP clients.
+
+        ``tool_name`` defaults to ``agent.name``; override when you
+        want a public-facing name distinct from the internal one
+        (e.g. agent ``"researcher-v3"`` → tool ``"research"``).
+        ``description`` defaults to a truncated ``agent.instructions``
+        and is what the calling LLM reads to decide when to invoke the
+        tool — make it specific.
+
+        The agent is also auto-registered for the runtime so the MCP
+        bridge can dispatch via ``runtime.run`` without an extra
+        ``server.register(agent)`` call. Re-enrolling an agent under
+        the same ``tool_name`` replaces the previous entry.
+        """
+        from murmur.mcp_server import MCPEnrollment
+
+        # Auto-register on the runtime + HTTP map. The bridge needs the
+        # agent reachable by name; making the operator manage two
+        # registries (HTTP and MCP) for the same physical agent would be
+        # an obvious footgun. Per-agent MCP opt-in is preserved because
+        # this method is distinct from ``register``.
+        self._agents.setdefault(agent.name, agent)
+
+        resolved_tool_name = tool_name if tool_name is not None else agent.name
+        resolved_description = (
+            description
+            if description is not None
+            else _summarise_instructions(agent.instructions)
+        )
+        self._mcp_enrollments[resolved_tool_name] = MCPEnrollment(
+            agent=agent,
+            tool_name=resolved_tool_name,
+            description=resolved_description,
+        )
+
+    async def serve_mcp(
+        self,
+        *,
+        transport: Literal["stdio", "http"] = "stdio",
+        server_name: str = "murmur",
+        instructions: str | None = None,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+    ) -> None:
+        """Run the MCP server.
+
+        Blocks until the transport exits (Ctrl-C for stdio; standard
+        ASGI shutdown for HTTP). Constructs a fresh :class:`FastMCP`
+        per call so multiple invocations on the same server work
+        cleanly. Raises :class:`ImportError` with a setup hint if the
+        ``murmur-ai[mcp-server]`` extra isn't installed.
+
+        Only agents added via :meth:`register_mcp` appear as tools. If
+        no agents are enrolled, raises :class:`RegistryError` rather
+        than silently starting an empty server.
+        """
+        if not self._mcp_enrollments:
+            raise RegistryError(
+                "no agents enrolled for MCP — call register_mcp(agent) "
+                "for at least one agent before serve_mcp()"
+            )
+        # Lazy import — keeps ``import murmur.server`` free of the mcp
+        # SDK when the extra isn't installed.
+        from murmur.mcp_server._server import serve as _mcp_serve
+
+        await _mcp_serve(
+            runtime=self._runtime,
+            enrollments=tuple(self._mcp_enrollments.values()),
+            transport=transport,
+            server_name=server_name,
+            instructions=instructions,
+            host=host,
+            port=port,
+        )
 
     # ------------------------------------------------------------------ serve
 
@@ -490,6 +589,19 @@ class AgentServer:
 # ---------------------------------------------------------------------------
 # Free helpers
 # ---------------------------------------------------------------------------
+
+
+_DEFAULT_MCP_DESCRIPTION_LIMIT = 200
+
+
+def _summarise_instructions(instructions: str) -> str:
+    """First-line, length-capped summary used as the default MCP description."""
+    first_line = instructions.strip().splitlines()[0] if instructions.strip() else ""
+    if not first_line:
+        return "Murmur agent (no description provided)."
+    if len(first_line) > _DEFAULT_MCP_DESCRIPTION_LIMIT:
+        return first_line[: _DEFAULT_MCP_DESCRIPTION_LIMIT - 1] + "…"
+    return first_line
 
 
 def _serialize_result(result: AgentResult[BaseModel]) -> dict[str, object]:

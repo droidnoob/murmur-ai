@@ -4,7 +4,7 @@
 
 ## Why this exists
 
-Murmur's pluggable surface (Backend, ContextPasser, Registry, …) is keyed on `typing.Protocol`. Without a shared suite, behaviour can drift silently between implementations — `ThreadBackend.spawn` works one way, `JobBackend.spawn` works another, and tests never catch the divergence because each backend is tested in isolation.
+Murmur's pluggable surface (Backend, ContextPasser, Registry, …) is keyed on `typing.Protocol`. Without a shared suite, behaviour can drift silently between implementations — `AsyncBackend.spawn` works one way, `JobBackend.spawn` works another, and tests never catch the divergence because each backend is tested in isolation.
 
 The shared suite fixes that: write the test once, parametrize the implementation.
 
@@ -36,12 +36,12 @@ Each implementation provides the fixture in its own test module:
 # tests/backends/test_thread.py
 from tests.contracts.backend_contract import BackendContract
 
-class TestThreadBackend(BackendContract):
+class TestAsyncBackend(BackendContract):
     @pytest.fixture
     def backend(self) -> Backend:
-        return ThreadBackend()
+        return AsyncBackend()
 
-    # add ThreadBackend-specific tests below if needed
+    # add AsyncBackend-specific tests below if needed
 ```
 
 Pytest runs every method on `BackendContract` for every subclass that overrides `backend`. New tests added to the contract automatically apply to every implementation.

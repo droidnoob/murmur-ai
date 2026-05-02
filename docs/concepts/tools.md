@@ -49,9 +49,9 @@ registry.register("web_search", web_search)
 ## Tool providers
 
 `ToolProvider` is the Protocol that resolves an agent's allowed tools at
-dispatch time. Today's concrete is `StaticToolProvider`; Phase 3 adds
-`RoleBasedToolProvider` (issue `murmur-ai-5cg`) and `DenylistToolProvider`
-(issue `murmur-ai-0fh`).
+dispatch time. Today's concrete is `StaticToolProvider`; a
+`RoleBasedToolProvider` (role → tool-set map) and a `DenylistToolProvider`
+(base set minus denied — for untrusted contexts) are queued.
 
 ```python
 class ToolProvider(Protocol):
@@ -90,7 +90,7 @@ enforcement as native tools.
 | `SANDBOX` | None | Skipped entirely |
 
 The matrix is enforced for MCP today. Native-tool enforcement is partial;
-the full matrix lands in `murmur-ai-001`.
+the full matrix is queued.
 
 ## Built-in / provider-side tools
 
@@ -116,7 +116,33 @@ agent = Agent(
 Tokens used by built-in tools still count toward `TokenBudget` — PydanticAI's
 `usage()` includes provider-side spend, and the cost middleware reads from
 that. Trust gating and per-tool events do **not** apply, by design — Murmur
-can't intercept what's not proxied through it. Decision D24.
+can't intercept what's not proxied through it.
+
+## `spawn_agents` — orchestration as a tool
+
+A third tool family is **runtime-bound**: factories that close over an
+`AgentRuntime` and expose orchestration primitives to the LLM. Today the
+shipping example is `make_spawn_agents_tool`, which lets a parent agent
+dispatch children mid-run:
+
+```python
+from murmur.tools import make_spawn_agents_tool
+
+spawn = make_spawn_agents_tool(runtime=runtime, template=swarm, output_type=Finding)
+runtime.tools.register("spawn_agents", spawn)
+```
+
+The factory returns an async callable that takes `list[SpawnSpec]` and
+returns `list[SpawnResult]`. Trust level, model, and tool surface for the
+children come from the bound :class:`AgentTemplate` — the LLM picks
+`name` / `instructions` / `input` per child and nothing else. The full
+pattern lives in [Agents — LLM-driven fan-out](agents.md#llm-driven-fan-out-with-spawn_agents).
+
+These tools route through `ToolExecutor` like any native tool — same
+trust gate, same lifecycle events. They differ only in **where** the
+work happens: the body re-enters `runtime.run` for each child, so each
+child is a full pipeline pass with its own events, budget charge, and
+backend dispatch.
 
 ## Lifecycle events
 

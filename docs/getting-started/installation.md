@@ -9,7 +9,7 @@ pip install murmur-ai
 ```
 
 This pulls in `pydantic`, `pydantic-ai`, `faststream`, `structlog`, and
-`pyyaml`. It's enough to run [`ThreadBackend`](../concepts/backends.md) — the
+`pyyaml`. It's enough to run [`AsyncBackend`](../concepts/backends.md) — the
 default in-process backend — without any broker or external service.
 
 ## Broker extras
@@ -74,10 +74,11 @@ pip install "murmur-ai[rocksdb]"         # high-throughput single-host
 All three implement the same `RunStore` Protocol and pass the same
 `RunStoreContract` test suite.
 
-## Container backend (Phase 4 — preview)
+## Container backend (preview)
 
-`murmur-ai[container]` will pull `docker==7.1.0` once the Phase 4
-`ContainerBackend` ships. Tracking issue: `murmur-ai-09g`.
+`murmur-ai[container]` will pull `docker==7.1.0` once `ContainerBackend`
+ships — full container isolation per agent run, queued for a future
+release.
 
 ## Development install
 

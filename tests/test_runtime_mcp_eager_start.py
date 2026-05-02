@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.core.protocols.toolsets import ToolDescriptor
 from murmur.runtime import AgentRuntime, RuntimeOptions
@@ -111,7 +111,7 @@ async def _stub_pa_agent(
 
 
 def _make_runtime(*, eager: bool) -> AgentRuntime:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = _stub_pa_agent  # ty: ignore[invalid-assignment]  # test seam
     return AgentRuntime(
         backend=backend,

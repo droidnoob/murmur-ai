@@ -21,6 +21,9 @@ real server, replace the bottom of ``main()`` with::
 
 …and curl ``http://127.0.0.1:8421/murmur/agents/geographer/run``.
 
+See also: ``docs/guides/embedded.md``, ``docs/api/server.md``,
+``docs/api/client.md``.
+
 Prereqs:
     pip install murmur-ai[server]
     export ANTHROPIC_API_KEY=...

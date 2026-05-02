@@ -15,6 +15,8 @@ Swap the ``InMemoryBroker()`` line for a ``FastStreamBroker`` (or just pass
 --broker kafka://localhost:9092 --agents geographer`` in another terminal)
 to see the distributed shape with no code change to the agent.
 
+See also: ``docs/concepts/backends.md``, ``docs/guides/distributed.md``.
+
 Prereqs:
     pip install murmur-ai
     export ANTHROPIC_API_KEY=...

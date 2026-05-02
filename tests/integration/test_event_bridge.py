@@ -22,7 +22,7 @@ from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
 from murmur.backends._inmemory_broker import InMemoryBroker
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.events import EventType, RuntimeEvent
 from murmur.runtime import AgentRuntime
@@ -60,7 +60,7 @@ async def _stub_pa_agent(
 
 
 def _make_worker_runtime() -> AgentRuntime:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = _stub_pa_agent  # ty: ignore[invalid-assignment]  # test seam
     return AgentRuntime(backend=backend)
 
@@ -72,7 +72,7 @@ def _make_bridged_worker_runtime(broker: InMemoryBroker) -> AgentRuntime:
     from murmur.events import BrokerEventBridge, LogEventEmitter, MultiEventEmitter
 
     emitter = MultiEventEmitter([LogEventEmitter(), BrokerEventBridge(broker)])
-    backend = ThreadBackend(event_emitter=emitter)
+    backend = AsyncBackend(event_emitter=emitter)
     backend._build_pa_agent = _stub_pa_agent  # ty: ignore[invalid-assignment]  # test seam
     return AgentRuntime(backend=backend, event_emitter=emitter)
 

@@ -1,4 +1,4 @@
-"""ThreadBackend — contract suite + lifecycle tests.
+"""AsyncBackend — contract suite + lifecycle tests.
 
 The contract suite (:class:`BackendContract`) verifies the Protocol surface.
 Below it, lifecycle tests exercise spawn → result, kill, and the failure
@@ -19,7 +19,7 @@ from pydantic_ai.models.test import TestModel
 from tests.contracts.backend_contract import BackendContract
 
 from murmur.agent import Agent
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.core.errors import SpawnError
 from murmur.core.protocols.backend import BackendStatus
@@ -42,13 +42,13 @@ async def _stub_pa_agent(
     )
 
 
-def _make_backend() -> ThreadBackend:
-    backend = ThreadBackend()
+def _make_backend() -> AsyncBackend:
+    backend = AsyncBackend()
     backend._build_pa_agent = _stub_pa_agent  # ty: ignore[invalid-assignment]  # test seam
     return backend
 
 
-async def _drain(backend: ThreadBackend) -> None:
+async def _drain(backend: AsyncBackend) -> None:
     """Cancel + await every spawned task so pytest's loop teardown is quiet."""
     pending = [t for t in backend._tasks.values() if not t.done()]
     for t in pending:
@@ -62,9 +62,9 @@ async def _drain(backend: ThreadBackend) -> None:
 # ---------------------------------------------------------------------------
 
 
-class TestThreadBackendContract(BackendContract):
+class TestAsyncBackendContract(BackendContract):
     @pytest.fixture
-    async def backend(self) -> AsyncIterator[ThreadBackend]:
+    async def backend(self) -> AsyncIterator[AsyncBackend]:
         b = _make_backend()
         try:
             yield b
@@ -78,7 +78,7 @@ class TestThreadBackendContract(BackendContract):
 
 
 @pytest.fixture
-async def thread_backend() -> AsyncIterator[ThreadBackend]:
+async def async_backend() -> AsyncIterator[AsyncBackend]:
     b = _make_backend()
     try:
         yield b
@@ -99,13 +99,11 @@ def echo_agent() -> Agent:
 
 
 async def test_result_returns_typed_output(
-    thread_backend: ThreadBackend,
+    async_backend: AsyncBackend,
     echo_agent: Agent,
 ) -> None:
-    handle = await thread_backend.spawn(
-        echo_agent, TaskSpec(input="hi"), AgentContext()
-    )
-    result = await thread_backend.result(handle)
+    handle = await async_backend.spawn(echo_agent, TaskSpec(input="hi"), AgentContext())
+    result = await async_backend.result(handle)
     assert result.is_ok()
     assert isinstance(result.output, _Out)
     assert result.agent_name == echo_agent.name
@@ -115,44 +113,38 @@ async def test_result_returns_typed_output(
 
 
 async def test_status_completed_after_result(
-    thread_backend: ThreadBackend,
+    async_backend: AsyncBackend,
     echo_agent: Agent,
 ) -> None:
-    handle = await thread_backend.spawn(
-        echo_agent, TaskSpec(input="hi"), AgentContext()
-    )
-    await thread_backend.result(handle)
-    assert await thread_backend.status(handle) is BackendStatus.COMPLETED
+    handle = await async_backend.spawn(echo_agent, TaskSpec(input="hi"), AgentContext())
+    await async_backend.result(handle)
+    assert await async_backend.status(handle) is BackendStatus.COMPLETED
 
 
 async def test_kill_before_result(
-    thread_backend: ThreadBackend,
+    async_backend: AsyncBackend,
     echo_agent: Agent,
 ) -> None:
-    handle = await thread_backend.spawn(
-        echo_agent, TaskSpec(input="hi"), AgentContext()
-    )
-    await thread_backend.kill(handle)
-    assert await thread_backend.status(handle) is BackendStatus.KILLED
-    result = await thread_backend.result(handle)
+    handle = await async_backend.spawn(echo_agent, TaskSpec(input="hi"), AgentContext())
+    await async_backend.kill(handle)
+    assert await async_backend.status(handle) is BackendStatus.KILLED
+    result = await async_backend.result(handle)
     assert not result.is_ok()
     assert isinstance(result.error, SpawnError)
 
 
 async def test_kill_is_idempotent(
-    thread_backend: ThreadBackend,
+    async_backend: AsyncBackend,
     echo_agent: Agent,
 ) -> None:
-    handle = await thread_backend.spawn(
-        echo_agent, TaskSpec(input="hi"), AgentContext()
-    )
-    await thread_backend.kill(handle)
-    await thread_backend.kill(handle)  # must not raise
-    assert await thread_backend.status(handle) is BackendStatus.KILLED
+    handle = await async_backend.spawn(echo_agent, TaskSpec(input="hi"), AgentContext())
+    await async_backend.kill(handle)
+    await async_backend.kill(handle)  # must not raise
+    assert await async_backend.status(handle) is BackendStatus.KILLED
 
 
 async def test_failed_run_yields_failed_result(echo_agent: Agent) -> None:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
 
     async def boom(
         _agent: Agent,
@@ -171,20 +163,20 @@ async def test_failed_run_yields_failed_result(echo_agent: Agent) -> None:
     assert await backend.status(handle) is BackendStatus.FAILED
 
 
-async def test_status_unknown_handle_raises(thread_backend: ThreadBackend) -> None:
+async def test_status_unknown_handle_raises(async_backend: AsyncBackend) -> None:
     from murmur.types import AgentHandle
 
     bogus = AgentHandle(agent_name="x", task_id="y", backend="thread")
     with pytest.raises(SpawnError, match="unknown handle"):
-        await thread_backend.status(bogus)
+        await async_backend.status(bogus)
 
 
-async def test_result_unknown_handle_raises(thread_backend: ThreadBackend) -> None:
+async def test_result_unknown_handle_raises(async_backend: AsyncBackend) -> None:
     from murmur.types import AgentHandle
 
     bogus = AgentHandle(agent_name="x", task_id="y", backend="thread")
     with pytest.raises(SpawnError, match="unknown handle"):
-        await thread_backend.result(bogus)
+        await async_backend.result(bogus)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +201,7 @@ def _double_wrap_output(out: _Out) -> _Out:
 
 
 async def test_pre_process_runs_in_order_on_string_input(
-    thread_backend: ThreadBackend,
+    async_backend: AsyncBackend,
 ) -> None:
     seen: list[str] = []
 
@@ -226,14 +218,14 @@ async def test_pre_process_runs_in_order_on_string_input(
         context_passer=NullContextPasser(),
         pre_process=(_strip, _exclaim, capture),
     )
-    handle = await thread_backend.spawn(agent, TaskSpec(input="  hi  "), AgentContext())
-    result = await thread_backend.result(handle)
+    handle = await async_backend.spawn(agent, TaskSpec(input="  hi  "), AgentContext())
+    result = await async_backend.result(handle)
     assert result.is_ok()
     assert seen == ["hi!"]  # capture sees post-strip post-exclaim
 
 
 async def test_post_process_runs_in_order(
-    thread_backend: ThreadBackend,
+    async_backend: AsyncBackend,
 ) -> None:
     agent = Agent(
         name="postecho",
@@ -244,8 +236,8 @@ async def test_post_process_runs_in_order(
         context_passer=NullContextPasser(),
         post_process=(_wrap_output, _double_wrap_output),
     )
-    handle = await thread_backend.spawn(agent, TaskSpec(input="hi"), AgentContext())
-    result = await thread_backend.result(handle)
+    handle = await async_backend.spawn(agent, TaskSpec(input="hi"), AgentContext())
+    result = await async_backend.result(handle)
     assert result.is_ok()
     assert isinstance(result.output, _Out)
     # TestModel emits 'a' for str outputs; wrapped then double-wrapped:
@@ -253,13 +245,11 @@ async def test_post_process_runs_in_order(
 
 
 async def test_no_hooks_is_identity(
-    thread_backend: ThreadBackend,
+    async_backend: AsyncBackend,
     echo_agent: Agent,
 ) -> None:
-    handle = await thread_backend.spawn(
-        echo_agent, TaskSpec(input="hi"), AgentContext()
-    )
-    result = await thread_backend.result(handle)
+    handle = await async_backend.spawn(echo_agent, TaskSpec(input="hi"), AgentContext())
+    result = await async_backend.result(handle)
     assert result.is_ok()
     assert isinstance(result.output, _Out)
 
@@ -270,7 +260,7 @@ async def test_no_hooks_is_identity(
 
 
 async def test_request_id_bound_to_structlog_during_run(
-    thread_backend: ThreadBackend,
+    async_backend: AsyncBackend,
     echo_agent: Agent,
 ) -> None:
     import structlog.contextvars
@@ -283,10 +273,10 @@ async def test_request_id_bound_to_structlog_during_run(
         return payload
 
     agent = echo_agent.with_(pre_process=(grab,))
-    handle = await thread_backend.spawn(
+    handle = await async_backend.spawn(
         agent, TaskSpec(input="x", request_id="req-known-42"), AgentContext()
     )
-    await thread_backend.result(handle)
+    await async_backend.result(handle)
     assert captured_request_ids == ["req-known-42"]
     # Cleanup verified: outside the run, request_id is unbound.
     assert "request_id" not in structlog.contextvars.get_contextvars()
@@ -298,18 +288,18 @@ async def test_request_id_bound_to_structlog_during_run(
 
 
 async def test_gather_returns_results_in_input_order(
-    thread_backend: ThreadBackend,
+    async_backend: AsyncBackend,
     echo_agent: Agent,
 ) -> None:
     tasks = [TaskSpec(input=f"q-{i}") for i in range(5)]
-    results = await thread_backend.gather(echo_agent, tasks, max_concurrency=3)
+    results = await async_backend.gather(echo_agent, tasks, max_concurrency=3)
     assert len(results) == 5
     assert all(r.is_ok() for r in results)
     assert [r.task_id for r in results] == [t.id for t in tasks]
 
 
 async def test_gather_partial_failure_does_not_raise(echo_agent: Agent) -> None:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
 
     call_count = {"n": 0}
 
@@ -339,8 +329,8 @@ async def test_gather_partial_failure_does_not_raise(echo_agent: Agent) -> None:
 
 
 async def test_gather_empty_returns_empty(
-    thread_backend: ThreadBackend,
+    async_backend: AsyncBackend,
     echo_agent: Agent,
 ) -> None:
-    results = await thread_backend.gather(echo_agent, [], max_concurrency=10)
+    results = await async_backend.gather(echo_agent, [], max_concurrency=10)
     assert results == []

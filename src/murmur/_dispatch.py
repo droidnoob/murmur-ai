@@ -13,7 +13,7 @@ MCP-discovered tools route through the same gate via a
 emit the identical ``tool_call_started`` / ``tool_call_completed`` /
 ``tool_call_failed`` lifecycle as native tools.
 
-This module is private (leading underscore). Both ``ThreadBackend`` (locally)
+This module is private (leading underscore). Both ``AsyncBackend`` (locally)
 and the broker-side ``Worker`` (which runs the same code path on the consumer
 end of ``JobBackend``) call into it. The symmetry collapses what would
 otherwise be duplicated dispatch code into one place.
@@ -84,6 +84,23 @@ async def build_pydantic_ai_agent(
         from pydantic_ai.models.fallback import FallbackModel
 
         pa_model = FallbackModel(agent.model, *agent.fallback_models)
+    # Concurrency limiting wraps *outside* FallbackModel: one slot per agent
+    # run regardless of which fallback ultimately serves the request.
+    # ``ConcurrencyLimitedModel`` accepts ``int | ConcurrencyLimit |
+    # AbstractConcurrencyLimiter`` directly; pass through whichever the user
+    # supplied. Mutual exclusivity is enforced on ``Agent`` construction.
+    if (
+        agent.max_concurrent_requests is not None
+        or agent.model_concurrency_limiter is not None
+    ):
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+        limiter: int | object = (
+            agent.model_concurrency_limiter
+            if agent.model_concurrency_limiter is not None
+            else agent.max_concurrent_requests
+        )
+        pa_model = ConcurrencyLimitedModel(pa_model, limiter=limiter)  # ty: ignore[invalid-argument-type]
     pa_agent: pydantic_ai.Agent[None, Any] = pydantic_ai.Agent(  # ty: ignore[invalid-assignment]
         model=pa_model,
         instructions=agent.instructions,

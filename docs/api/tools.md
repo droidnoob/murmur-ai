@@ -80,6 +80,32 @@ matrix, prefixing, and lifecycle modes.
     options:
       heading_level: 4
 
+## Dynamic fan-out
+
+Factory + value types for the LLM-callable `spawn_agents` tool — see
+the [Agents concept page](../concepts/agents.md#llm-driven-fan-out-with-spawn_agents)
+for the end-to-end usage pattern.
+
+### `make_spawn_agents_tool`
+
+::: murmur.tools.make_spawn_agents_tool
+    options:
+      heading_level: 4
+
+### `SpawnSpec`
+
+::: murmur.tools.SpawnSpec
+    options:
+      heading_level: 4
+      show_bases: false
+
+### `SpawnResult`
+
+::: murmur.tools.SpawnResult
+    options:
+      heading_level: 4
+      show_bases: false
+
 ## Built-in / provider-side tools
 
 These are PydanticAI's `AbstractBuiltinTool` subclasses, re-exported
@@ -88,7 +114,7 @@ on the LLM provider's infrastructure — Anthropic web search, OpenAI
 code execution, Gemini file search, etc. — and **bypass** the
 Murmur `ToolExecutor` by design. See
 [Tools — built-in / provider-side](../concepts/tools.md#built-in-provider-side-tools)
-for the executor-bypass caveat (decision D24).
+for the executor-bypass caveat.
 
 | Class | Provider | Notes |
 |---|---|---|

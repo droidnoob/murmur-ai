@@ -1,16 +1,21 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Murmur" width="128" height="128">
+</p>
+
 # Murmur
 
 > **Agents that move as one.**
 
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/downloads/)
 [![pydantic-ai](https://img.shields.io/badge/pydantic--ai-1.87-purple)](https://ai.pydantic.dev/)
-[![FastStream](https://img.shields.io/badge/faststream-0.6-orange)](https://faststream.airt.ai/)
+[![FastStream](https://img.shields.io/badge/faststream-0.6-orange)](https://faststream.ag2.ai/latest/)
 [![PyPI](https://img.shields.io/badge/pypi-murmur--ai-blueviolet)](https://pypi.org/project/murmur-ai/)
 [![Status](https://img.shields.io/badge/status-pre--alpha-lightgrey)](#status)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 A Python multi-agent orchestration runtime. Strictly typed, broker-agnostic, zero-config to start, distributed when you need it.
 
-📖 **[Documentation →](https://murmur-ai.github.io/murmur/)** · 🧭 **[Concepts →](https://murmur-ai.github.io/murmur/concepts/architecture/)** · 📚 **[API reference →](https://murmur-ai.github.io/murmur/api/)** · 🛠️ **[Contributing →](CONTRIBUTING.md)**
+📖 **[Documentation →](https://murmur-ai.github.io/murmur/)** · 🧭 **[Concepts →](https://murmur-ai.github.io/murmur/concepts/architecture/)** · 📚 **[API reference →](https://murmur-ai.github.io/murmur/api/)** · 🛠️ **[Contributing →](CONTRIBUTING.md)** · 🔒 **[Security →](SECURITY.md)**
 
 ---
 
@@ -293,4 +298,5 @@ conventions, architecture, and "do not build" boundaries. Mirrored to
 
 ## License
 
-TBD before v0.1.
+[MIT](LICENSE). Compatible with our MIT (`pydantic-ai`, `pydantic`,
+`uvloop`) and Apache-2.0 (`faststream`, `mcp`, `httpx`) dependencies.

@@ -7,9 +7,10 @@ subset. Concretes here satisfy the `ContextPasser` Protocol structurally.
 from murmur.context import FullContextPasser, NullContextPasser
 ```
 
-Phase 3 adds `SummaryContextPasser` (issue `murmur-ai-7cw`) and
-`SelectiveContextPasser` (issue `murmur-ai-d50`). The latter doubles as
-the untrusted-context sanitiser on the result-return path.
+Two more concretes are queued: `SummaryContextPasser`
+(cheap-model summarisation with token-budget aware deduction) and
+`SelectiveContextPasser` (relevance-pruned, doubles as the
+untrusted-context sanitiser on the result-return path).
 
 ## `FullContextPasser`
 

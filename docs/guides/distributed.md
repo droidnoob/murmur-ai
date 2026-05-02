@@ -5,6 +5,21 @@ When one machine isn't enough, swap `AgentRuntime()` for
 definition doesn't change. The workflow doesn't change. Only the
 runtime constructor does.
 
+## Bootstrap
+
+```bash
+uv init my-murmur-app
+cd my-murmur-app
+uv add 'murmur-ai[kafka]'        # or [nats] / [rabbitmq] / [redis]
+export ANTHROPIC_API_KEY=...
+```
+
+A self-contained run that uses an in-process broker (no external
+services) lives at [`examples/distributed.py`](https://github.com/murmur-ai/murmur/blob/main/examples/distributed.py)
+— same agent code, same wire envelope as a real Kafka deployment, just
+the broker swapped out. Drop it into your project and run with
+`uv run python distributed.py`.
+
 ## Wire shape
 
 ```
@@ -18,8 +33,7 @@ runtime constructor does.
 
 Per-agent task topics carry `TaskMessage` envelopes. A single
 `{agent}.results` reply topic carries `ResultMessage` envelopes back,
-correlated to the publisher's outstanding spawns by `batch_id`. Decision
-D5.
+correlated to the publisher's outstanding spawns by `batch_id`.
 
 ## Publisher
 
@@ -30,7 +44,7 @@ runtime = AgentRuntime(broker="kafka://kafka.prod:9092")
 results = await runtime.gather(researcher, tasks=tasks, max_concurrency=200)
 ```
 
-The publisher's runtime is thread-mode internally — `JobBackend` handles
+The publisher's runtime is in-process internally — `JobBackend` handles
 the publish + collect. Worker republish loops are avoided by routing
 through `ResultCollector`.
 
@@ -42,7 +56,7 @@ Programmatic:
 from murmur import AgentRuntime
 from murmur.worker import Worker
 
-runtime = AgentRuntime()                      # thread-mode, intentionally
+runtime = AgentRuntime()                      # in-process, intentionally
 worker = Worker(
     runtime=runtime,
     broker="kafka://kafka.prod:9092",
@@ -87,7 +101,7 @@ changes mid-task causes message redelivery.
 `Worker.start()` prints a multi-line Murmur banner to stderr with
 broker, runtime id, agents, per-agent topics, and concurrency. The
 banner uses `sys.stderr` directly so the layout survives structlog
-rendering. Decision D18.
+rendering.
 
 ## Lifecycle hooks
 
@@ -164,3 +178,11 @@ same `RunStoreContract` test suite.
 | Broker partition unavailable | `gather` slot returns `SpawnError`; partial-batch survives. |
 | Result topic backed up | Per-spawn future resolves on first matching `batch_id`; backlog drains naturally. |
 | Worker can't deserialise output | `ResultMessage.success=False` with `error_message`; publisher's `AgentResult.is_ok()` returns `False`. |
+
+## Where to next
+
+- **LLM-driven dynamic spawning across the fleet** — careful runtime
+  binding for `spawn_agents`: [Backends — runtime-binding gotcha](../concepts/backends.md#spawn_agents-and-the-runtime-binding-gotcha).
+- **Mount agent endpoints in your existing app** — [Embedded mode](embedded.md).
+- **Centralised SSE dashboard for the fleet** — [Events — distributed bridge](../concepts/events.md#distributed-event-bridge).
+- **Cap fleet-wide cost** — [`TokenBudget` semantics in distributed mode](../concepts/cost.md#distributed-mode).

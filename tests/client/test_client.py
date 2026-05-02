@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.core.errors import RegistryError
 from murmur.runtime import AgentRuntime
@@ -32,7 +32,7 @@ class _Echo(BaseModel):
 
 @pytest.fixture
 def server() -> AgentServer:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
 
     async def build(
         agent: Agent, _allowed: frozenset[str], _task_id: str

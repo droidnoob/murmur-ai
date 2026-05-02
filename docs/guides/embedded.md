@@ -4,6 +4,21 @@ Mount Murmur inside a user-supplied FastAPI app. No separate process.
 The same agents, the same observability, but routed through your
 application's middleware stack and lifecycle.
 
+## Bootstrap
+
+```bash
+uv init my-fastapi-app
+cd my-fastapi-app
+uv add 'murmur-ai[server]' fastapi httpx uvicorn
+export ANTHROPIC_API_KEY=...
+```
+
+A working end-to-end script — same `Agent` as the
+[Quickstart](../getting-started/quickstart.md), mounted via
+`AgentRouter`, exercised both over HTTP (httpx against the in-process
+ASGI app) and via the in-process `LocalClient` — lives at
+[`examples/embedded.py`](https://github.com/murmur-ai/murmur/blob/main/examples/embedded.py).
+
 ## Why embed
 
 - You already run a FastAPI service and want agent endpoints alongside.
@@ -35,12 +50,12 @@ app.include_router(router, prefix="/agents")
 
 `AgentRouter` is an `APIRouter` subclass — you mount it on your app like
 any other router. The lifespan calls `runtime.shutdown()` automatically
-on exit, releasing MCP subprocesses and broker connections. Decision D13.
+on exit, releasing MCP subprocesses and broker connections.
 
 `AgentRouter.install_exception_handlers(app)` is a classmethod that
 wires Murmur's domain errors to the HTTP status codes in
-`server/errors.py` (issue → status mapping per decision D16). It's a
-separate one-liner because it modifies the host app, not the router.
+`server/errors.py` (each error type maps to a stable HTTP status). It's
+a separate one-liner because it modifies the host app, not the router.
 
 ## Routes the router adds
 
@@ -55,7 +70,7 @@ separate one-liner because it modifies the host app, not the router.
 
 `/healthz` and `/readyz` are split per the conventional pattern —
 `/healthz` checks the process is alive; `/readyz` checks it can accept
-traffic. Item 29 in the Phase 1.5 close-out.
+traffic.
 
 ## SSE event stream — embedded
 
@@ -93,7 +108,6 @@ result = await run.result()
 
 `LocalClient` and `MurmurClient` (HTTP) both satisfy a shared
 `_RunBackend` Protocol — same call surface, different transport.
-Decision D10.
 
 ## Auth, rate limiting, request IDs
 
@@ -106,7 +120,15 @@ cleanly:
   in front of the router.
 - **Request IDs**: any standard middleware that sets `X-Request-Id`.
   Murmur's runtime promotes `request_id` to `trace_id` on every
-  `RuntimeEvent` (decision D19).
+  `RuntimeEvent`.
 
-CLAUDE.md §22 marks auth and rate limiting as out-of-scope; the
+Auth and rate limiting are deliberately out of scope for Murmur — the
 embedded pattern is how you compose them in.
+
+## Where to next
+
+- **Run a fleet behind your app** — [Distributed deployments](distributed.md).
+- **Live event stream over your own SSE route** — [`SSEEventEmitter` setup](../concepts/events.md#sseeventemitter)
+  and the [`events_dashboard.py` example](https://github.com/murmur-ai/murmur/blob/main/examples/events_dashboard.py).
+- **Cap costs per request** — [`TokenBudget`](../concepts/cost.md).
+- **Decompose work via the LLM inside an HTTP handler** — [Agents — LLM-driven fan-out](../concepts/agents.md#llm-driven-fan-out-with-spawn_agents).

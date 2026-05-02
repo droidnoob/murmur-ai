@@ -24,9 +24,17 @@ class RuntimeEvent(BaseModel):
     payload: Mapping[str, object]
 ```
 
-`trace_id` **is** `request_id` from Phase 1 — Phase 2 didn't introduce a
-new ID concept. `parent_trace_id` stays `None` until Phase 4 cascading
-spawn lands. Decision D19.
+`trace_id` is the same value `TaskSpec.request_id` carries — Murmur
+doesn't introduce a separate ID for events. `parent_trace_id` stays
+`None` until cascading-spawn machinery ships.
+
+This affects the [`spawn_agents`](agents.md#llm-driven-fan-out-with-spawn_agents)
+tool: each child fired by the orchestrator's LLM emits the standard
+`AGENT_SPAWNED` / `AGENT_COMPLETED` (or `_FAILED`) pair, but children
+appear as **independent top-level runs** in the event stream — there's
+no parent-pointer back to the orchestrator's `trace_id` yet. Observers
+correlate by timing + `agent_name` until the cascading-spawn graph
+surfaces.
 
 ## `EventType`
 
@@ -67,7 +75,7 @@ Default. Forwards every event to `structlog` with the event's
 `EventType.value` as the event name. Failure event types
 (`agent_failed`, `tool_call_failed`, `budget_exceeded`,
 `depth_limit_exceeded`) route to `aerror`; everything else goes to
-`ainfo`. Decisions D20, D21.
+`ainfo`.
 
 ### `SSEEventEmitter`
 
@@ -85,13 +93,13 @@ async for event in sse.subscribe():
 ```
 
 `subscribe()` returns an `AsyncGenerator` (not `AsyncIterator`) so
-callers can `aclose()` on connection drop. Decision D22, D28.
+callers can `aclose()` on connection drop.
 
 ### `MultiEventEmitter`
 
 Fan-out. Sibling failures are contained — a custom emitter that raises
 won't take the others down. Wrap your custom emitter directly (without
-`Multi`) to surface the raise during debugging. Decision D29.
+`Multi`) to surface the raise during debugging.
 
 ```python
 from murmur.events import LogEventEmitter, MultiEventEmitter, SSEEventEmitter
@@ -132,6 +140,22 @@ murmur serve --port 8420 --reload --reload-dir ./specs --reload-dir ./src
 Default include set is `*.py`, `*.yaml`, `*.yml`. Override with
 `--reload-include` / `--reload-exclude`.
 
+## `murmur status` — terminal SSE consumer
+
+Tail-style live view of the same `/events/stream` endpoint, useful in
+CI logs or over SSH when no browser is available:
+
+```bash
+murmur status                                         # 127.0.0.1:8420 by default
+murmur status --url http://prod-host:8420/events/stream
+murmur status --filter-event-type agent_failed --filter-event-type tool_call_failed
+murmur status --filter-agent researcher
+```
+
+Each `RuntimeEvent` renders as one line: `event_type agent=… task=…
+trace=… [payload-key=value, …]`. Reconnects on dropped connection
+(`--no-reconnect` to fail-fast instead). Ctrl-C exits cleanly.
+
 ## Distributed event bridge
 
 Without `publish_events=True`, the publisher's emitter sees only
@@ -152,8 +176,8 @@ runtime = AgentRuntime(
 The publisher subscribes to `murmur.events.{runtime_id}`, the worker
 relays each `RuntimeEvent` through `BrokerEventBridge`, and the
 publisher's local emitter sees the full stream. This doubles broker
-load (every event becomes a broker message), so it's opt-in. Decision D30.
+load (every event becomes a broker message), so it's opt-in.
 
 `AGENT_DISPATCHED` fires publisher-side regardless of `publish_events`
 — gives callers immediate "task accepted by broker" visibility even
-when the worker is seconds away from picking it up. Decision D31.
+when the worker is seconds away from picking it up.

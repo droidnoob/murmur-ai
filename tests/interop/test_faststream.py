@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.interop import as_faststream_handler
 from murmur.runtime import AgentRuntime
@@ -52,8 +52,8 @@ def _agent() -> Agent:
 
 
 async def test_handler_dispatches_agent_through_default_runtime() -> None:
-    """Without an explicit runtime, a fresh thread-mode AgentRuntime is built."""
-    backend = ThreadBackend()
+    """Without an explicit runtime, a fresh in-process AgentRuntime is built."""
+    backend = AsyncBackend()
     backend._build_pa_agent = _build_factory()  # noqa: SLF001
     runtime = AgentRuntime(backend=backend)
 
@@ -65,7 +65,7 @@ async def test_handler_dispatches_agent_through_default_runtime() -> None:
 
 
 async def test_handler_accepts_explicit_runtime() -> None:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = _build_factory()  # noqa: SLF001
     runtime = AgentRuntime(backend=backend)
 

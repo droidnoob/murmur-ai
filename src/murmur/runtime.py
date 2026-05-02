@@ -1,6 +1,6 @@
 """``murmur.AgentRuntime`` — the front door.
 
-Constructs the pipeline, picks a backend (:class:`ThreadBackend` for local,
+Constructs the pipeline, picks a backend (:class:`AsyncBackend` for local,
 :class:`JobBackend` for distributed), and exposes :meth:`run` and
 :meth:`gather`.
 
@@ -28,8 +28,8 @@ from pydantic import BaseModel, ConfigDict
 from murmur._sync import reject_if_in_event_loop
 from murmur.backends._faststream_broker import FastStreamBroker
 from murmur.backends._inmemory_broker import InMemoryBroker
+from murmur.backends.async_backend import AsyncBackend
 from murmur.backends.job import JobBackend
-from murmur.backends.thread import ThreadBackend
 from murmur.core.errors import RegistryError, SpecValidationError
 from murmur.core.pipeline import Pipeline, PipelineContext
 from murmur.middleware.cost_tracking import CostTrackingMiddleware, TokenBudget
@@ -122,7 +122,7 @@ class RuntimeOptions(BaseModel):
 class AgentRuntime:
     """The orchestration runtime.
 
-    >>> runtime = AgentRuntime()                       # ThreadBackend
+    >>> runtime = AgentRuntime()                       # AsyncBackend
     >>> runtime = AgentRuntime(broker="memory://")     # JobBackend, in-proc
     >>> runtime = AgentRuntime(broker="kafka://...")   # JobBackend, real broker
 
@@ -267,7 +267,7 @@ class AgentRuntime:
         """Fan a single agent across many tasks. Bounded by ``max_concurrency``.
 
         Delegates to ``backend.gather`` when the backend implements one
-        (``ThreadBackend`` uses an ``asyncio.Queue`` + worker pool;
+        (``AsyncBackend`` uses an ``asyncio.Queue`` + worker pool;
         ``JobBackend`` publishes via the ``ResultCollector``). Falls
         back to a semaphore-bounded fan-out otherwise. **Default
         (``fail_fast=False``)**: per-task failures always land in their
@@ -619,7 +619,7 @@ class AgentRuntime:
                     "publish_events=True requires a broker — pass broker= or "
                     "broker_instance= to AgentRuntime, or drop publish_events"
                 )
-            return ThreadBackend(
+            return AsyncBackend(
                 tool_registry=self._tool_registry,
                 tool_executor=self._tool_executor,
                 event_emitter=self._emitter,

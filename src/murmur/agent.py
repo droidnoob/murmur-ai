@@ -19,9 +19,9 @@ declares the hooks against a typed ``input_type`` / ``output_type``.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ``AbstractBuiltinTool`` lives in :mod:`pydantic_ai.builtin_tools` and is used
 # as the runtime type for the ``builtin_tools`` field — Pydantic v2 needs the
@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # etc.) are re-exported under :mod:`murmur.tools` so users still don't need to
 # import from PydanticAI to populate this field.
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.concurrency import AbstractConcurrencyLimiter
 
 from murmur.context.null import NullContextPasser
 from murmur.core.protocols.context import ContextPasser
@@ -165,6 +166,44 @@ class Agent(BaseModel):
     run time, which surfaces as :class:`SpawnError`.
     """
 
+    max_concurrent_requests: int | None = None
+    """Convenience cap on concurrent HTTP requests *to this model*.
+
+    When set to a positive integer, the runtime wraps the resolved model in
+    :class:`pydantic_ai.models.concurrency.ConcurrencyLimitedModel` with a
+    fresh per-agent :class:`murmur.models.ConcurrencyLimiter`. Distinct from
+    :meth:`AgentRuntime.gather`'s ``max_concurrency`` (which caps Murmur's
+    task fan-out): this caps the **provider-side** request count, useful when
+    a shared API key is rate-limited.
+
+    >>> Agent(name="r", model="openai:gpt-5.2", max_concurrent_requests=5, ...)
+
+    Mutually exclusive with :attr:`model_concurrency_limiter`. Use the limiter
+    field instead when several agents need to share one cap (e.g. one Anthropic
+    key behind a fleet of agents).
+    """
+
+    model_concurrency_limiter: AbstractConcurrencyLimiter | None = None
+    """Pre-built concurrency limiter shared across agents — wraps the resolved
+    model with the same limiter instance every dispatch.
+
+    Build via :class:`murmur.models.ConcurrencyLimiter` (or any
+    :class:`murmur.models.AbstractConcurrencyLimiter` subclass for custom
+    backends — e.g. a Redis-backed cross-process limiter):
+
+    >>> from murmur.models import ConcurrencyLimiter
+    >>> pool = ConcurrencyLimiter(max_running=10, name="openai-pool")
+    >>> head = Agent(name="head", model="openai:gpt-5.2",
+    ...              model_concurrency_limiter=pool, ...)
+    >>> minion = Agent(name="minion", model="openai:gpt-5.2",
+    ...                model_concurrency_limiter=pool, ...)
+
+    Mutually exclusive with :attr:`max_concurrent_requests`. Limiting is
+    **single-process** by default — pass a custom ``AbstractConcurrencyLimiter``
+    subclass (e.g. Redis-backed) for cross-process limiting across a worker
+    fleet.
+    """
+
     model_settings: Mapping[str, object] | None = None
     """Per-provider knobs forwarded to the underlying model — temperature,
     max_tokens, top_p, etc.
@@ -199,7 +238,7 @@ class Agent(BaseModel):
     backend: str = "auto"
     """Routing hint for :class:`AgentRuntime` to pick a :class:`Backend`.
     ``"auto"`` (default) defers to the runtime's configured backend
-    (typically ThreadBackend in local mode, JobBackend when a broker URL was
+    (typically AsyncBackend in local mode, JobBackend when a broker URL was
     supplied). Reserved for future overrides — currently informational."""
 
     pre_process: tuple[ProcessHook, ...] = ()
@@ -215,6 +254,24 @@ class Agent(BaseModel):
     Each hook is ``(output_type) -> output_type``. Sync, pure — no I/O, no
     async. Empty tuple = identity.
     """
+
+    @model_validator(mode="after")
+    def _validate_concurrency_limit(self) -> Self:
+        if (
+            self.max_concurrent_requests is not None
+            and self.model_concurrency_limiter is not None
+        ):
+            raise ValueError(
+                "max_concurrent_requests and model_concurrency_limiter are "
+                "mutually exclusive — pick the int knob for a per-agent cap, "
+                "or the limiter for a shared cap across agents."
+            )
+        if (
+            self.max_concurrent_requests is not None
+            and self.max_concurrent_requests < 1
+        ):
+            raise ValueError("max_concurrent_requests must be a positive integer.")
+        return self
 
     def with_(self, **updates: object) -> Agent:
         """Return a copy with the given fields replaced — the only mutation path."""

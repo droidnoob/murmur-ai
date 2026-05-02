@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.core.errors import RegistryError
 from murmur.runs import RunState
@@ -44,7 +44,7 @@ def _build_factory(canned: dict[str, Any]) -> Any:
 
 
 def _runtime_with(canned: dict[str, Any]) -> AgentRuntime:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = _build_factory(canned)  # noqa: SLF001
     return AgentRuntime(backend=backend)
 

@@ -10,7 +10,7 @@ from murmur_client import LocalClient, MurmurClient, Run
 ```
 
 Both client classes satisfy a shared `_RunBackend` Protocol — same
-call surface, different transport. Decision D10.
+call surface, different transport.
 
 ## `MurmurClient`
 

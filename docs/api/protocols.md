@@ -40,10 +40,9 @@ Pydantic field types or in `isinstance()` checks — `EventEmitter` and
 ### `Backend`
 
 The unit of execution. Concretes:
-[`ThreadBackend`](../concepts/backends.md#threadbackend),
-[`JobBackend`](../concepts/backends.md#jobbackend), and the Phase 4
-`ContainerBackend` (issue `murmur-ai-09g`). All pass the shared
-`BackendContract` test suite.
+[`AsyncBackend`](../concepts/backends.md#asyncbackend),
+[`JobBackend`](../concepts/backends.md#jobbackend), and a future
+`ContainerBackend`. All pass the shared `BackendContract` test suite.
 
 ::: murmur.core.protocols.Backend
     options:
@@ -63,9 +62,8 @@ The unit of execution. Concretes:
 
 Decides what flows into a spawn. Concretes today:
 [`FullContextPasser`](context.md#fullcontextpasser),
-[`NullContextPasser`](context.md#nullcontextpasser). Phase 3 adds
-`SummaryContextPasser` (issue `murmur-ai-7cw`) and
-`SelectiveContextPasser` (issue `murmur-ai-d50`).
+[`NullContextPasser`](context.md#nullcontextpasser).
+`SummaryContextPasser` and `SelectiveContextPasser` are queued.
 
 ::: murmur.core.protocols.ContextPasser
     options:
@@ -77,9 +75,9 @@ Decides what flows into a spawn. Concretes today:
 ### `ToolProvider`
 
 Resolves an agent's allowed tools at dispatch time. Concrete today:
-[`StaticToolProvider`](tools.md#statictoolprovider). Phase 3 adds
-`RoleBasedToolProvider` (`murmur-ai-5cg`) and `DenylistToolProvider`
-(`murmur-ai-0fh`).
+[`StaticToolProvider`](tools.md#statictoolprovider).
+`RoleBasedToolProvider` (role → tool-set map) and `DenylistToolProvider`
+(base set minus denied) are queued.
 
 ::: murmur.core.protocols.ToolProvider
     options:
@@ -124,7 +122,7 @@ field type on `Agent.mcp_servers`.
 
 Classifies a task into a single-agent vs multi-agent path. Concrete
 today: `AlwaysSingleRouter` in `murmur.routing`. An LLM-based router is
-queued for after Phase 3.
+queued.
 
 ::: murmur.core.protocols.Router
     options:
@@ -149,8 +147,9 @@ The instrumentation sink. Concretes:
 [`BrokerEventBridge`](events.md#brokereventbridge). All pass the shared
 `EventEmitterContract` suite. Marked `@runtime_checkable`.
 
-Phase 4 adds `WebSocketEventEmitter` (`murmur-ai-454`) and
-`FastStreamEventEmitter` (`murmur-ai-7yb`).
+A `WebSocketEventEmitter` (push live events to connected dashboards) and
+`FastStreamEventEmitter` (publish events onto a configurable broker
+topic) are queued.
 
 ::: murmur.core.protocols.EventEmitter
     options:

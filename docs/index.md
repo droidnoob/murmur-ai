@@ -4,6 +4,10 @@ hide:
   - toc
 ---
 
+<p align="center">
+  <img src="assets/logo.png" alt="Murmur" width="128" height="128">
+</p>
+
 # Murmur
 
 > **Agents that move as one.**
@@ -25,7 +29,7 @@ behind its own public API.
 pip install murmur-ai
 ```
 
-ThreadBackend works out of the box with no broker. Add a broker extra when you're
+AsyncBackend works out of the box with no broker. Add a broker extra when you're
 ready to distribute:
 
 ```bash
@@ -81,7 +85,7 @@ constructor changes.
   No free text passes between agents.
 - **Tools execute in the runtime, not the agent.** Trust enforcement, rate
   limiting, and observability are uniform.
-- **Same code, local or distributed.** ThreadBackend (`asyncio`) and JobBackend
+- **Same code, local or distributed.** AsyncBackend (`asyncio`) and JobBackend
   (FastStream + Kafka / NATS / RabbitMQ / Redis) are both first-class.
 - **Observable by default.** Every spawn, tool call, and completion flows
   through a typed `RuntimeEvent` to swappable emitters (`Log` / `SSE` / `Multi`

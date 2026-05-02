@@ -4,7 +4,7 @@ Replaces ``InMemoryBroker`` with ``FastStreamBroker`` (Kafka / NATS /
 RabbitMQ / Redis) wrapped in FastStream's ``TestBroker`` context — proving
 the full distributed-mode loop works on the real wire format for every
 supported broker. ``runtime.run_group`` → publisher → broker → worker →
-ThreadBackend dispatch → wire envelope → publisher rehydrates typed
+AsyncBackend dispatch → wire envelope → publisher rehydrates typed
 output, with `FanOut` driving auto fan-out across minions.
 
 No Docker. Real-broker integration via ``testcontainers`` is a follow-up.
@@ -23,7 +23,7 @@ from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
 from murmur.backends._faststream_broker import FastStreamBroker
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.groups.edge import Edge
 from murmur.groups.spec import AgentGroup
@@ -181,7 +181,7 @@ async def pipeline(
             runtime_id=f"rt-{scheme}",
         )
 
-        worker_backend = ThreadBackend()
+        worker_backend = AsyncBackend()
         worker_backend._build_pa_agent = _make_canned_factory()
         worker_runtime = AgentRuntime(backend=worker_backend)
 

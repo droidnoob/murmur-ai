@@ -6,7 +6,8 @@ readme = "README.md"
 authors = [
     { name = "droidnoob", email = "ak@needletailai.com" }
 ]
-license = { text = "TBD" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 keywords = ["agents", "llm", "orchestration", "pydantic-ai", "faststream"]
 classifiers = [
@@ -62,6 +63,20 @@ container = ["docker==7.1.0"]
 # semantics. Not pulled into core because production deployments should
 # not auto-restart on file changes.
 reload = ["watchfiles>=0.20,<2"]
+
+# MCP expose side — turns ``AgentServer`` into a Model Context Protocol
+# server that Claude Desktop / Cursor / any MCP-aware client can call.
+# Pulls the official MCP Python SDK only when the operator opts in. The
+# consume side (Murmur agents calling MCP servers) does NOT need this
+# extra — it's transitively available via PydanticAI.
+mcp-server = ["mcp>=1.27,<2.0"]
+
+# uvloop — drop-in replacement for the stdlib asyncio event loop.
+# Opt-in via ``murmur serve --uvloop`` / ``murmur worker start --uvloop``
+# or the ``MURMUR_USE_UVLOOP=1`` env var. POSIX-only; uvloop has no
+# Windows wheels, so the CLI falls back to the default loop with a
+# warning rather than failing on Windows.
+uvloop = ["uvloop>=0.21,<1.0"]
 
 [project.scripts]
 murmur = "murmur.cli:main"

@@ -4,6 +4,9 @@ Run a single agent against a single structured task, locally, with no broker.
 This is the simplest possible Murmur program — one ``AgentRuntime``, one
 ``Agent``, one ``TaskSpec``. No external services. No worker process.
 
+See also: ``docs/concepts/runtime.md``, ``docs/concepts/agents.md``.
+Pairs with the tutorial at ``docs/getting-started/quickstart.md``.
+
 Prereqs:
     pip install murmur-ai
     export ANTHROPIC_API_KEY=...
@@ -51,7 +54,7 @@ async def main() -> int:
         trust_level=TrustLevel.LOW,
     )
 
-    runtime = AgentRuntime()  # ThreadBackend — no broker, runs in-process.
+    runtime = AgentRuntime()  # AsyncBackend — no broker, runs in-process.
 
     result = await runtime.run(
         geographer,

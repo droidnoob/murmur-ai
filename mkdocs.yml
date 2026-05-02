@@ -13,6 +13,8 @@ strict: true
 
 theme:
   name: material
+  logo: assets/logo.png
+  favicon: assets/logo.png
   features:
     - announce.dismiss
     - content.action.edit
@@ -150,6 +152,7 @@ nav:
   - API reference:
       - Overview: api/index.md
       - Agents & types: api/agent.md
+      - Models: api/models.md
       - Runtime: api/runtime.md
       - Groups: api/groups.md
       - Events: api/events.md
@@ -157,12 +160,14 @@ nav:
       - Tools: api/tools.md
       - Context passers: api/context.md
       - Server: api/server.md
+      - MCP server: api/mcp_server.md
       - Worker: api/worker.md
       - Runs: api/runs.md
       - Interop: api/interop.md
       - Protocols: api/protocols.md
       - Errors: api/errors.md
       - Client: api/client.md
+  - Security: security.md
   - Changelog: changelog.md
   - Contributing: contributing.md
 

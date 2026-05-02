@@ -2,7 +2,7 @@
 
 Drives the FastAPI app through ``httpx.AsyncClient`` over an
 ``httpx.ASGITransport`` so no real port is bound. ``TestModel`` is injected
-via the runtime's underlying ``ThreadBackend`` so dispatch never reaches a
+via the runtime's underlying ``AsyncBackend`` so dispatch never reaches a
 real LLM.
 """
 
@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.groups.edge import Edge
 from murmur.groups.spec import AgentGroup
@@ -90,7 +90,7 @@ def _agent(name: str, output_type: type[BaseModel]) -> Agent:
 
 @pytest.fixture
 def server() -> AgentServer:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = _make_factory()
     runtime = AgentRuntime(backend=backend)
     s = AgentServer(runtime=runtime)
@@ -378,7 +378,7 @@ def _build_server_with_sse(
 
     sse = SSEEventEmitter(heartbeat_interval=heartbeat_interval)
     emitter = MultiEventEmitter([LogEventEmitter(), sse])
-    backend = ThreadBackend(event_emitter=emitter)
+    backend = AsyncBackend(event_emitter=emitter)
     backend._build_pa_agent = _make_factory()
     runtime = AgentRuntime(backend=backend, event_emitter=emitter)
     server = AgentServer(runtime=runtime, sse_emitter=sse)
@@ -389,7 +389,7 @@ def _build_server_with_sse(
 async def test_events_stream_route_absent_when_emitter_not_passed(
     echo_agent: Agent,
 ) -> None:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = _make_factory()
     runtime = AgentRuntime(backend=backend)
     s = AgentServer(runtime=runtime)

@@ -7,7 +7,7 @@ canned outputs so no real LLM is hit. The test asserts:
 
 - The publisher-side runtime publishes ``TaskMessage`` envelopes onto the
   per-agent topic.
-- The worker consumes them, dispatches via its inner ThreadBackend runtime,
+- The worker consumes them, dispatches via its inner AsyncBackend runtime,
   publishes ``ResultMessage`` back, and the publisher rehydrates the typed
   output against ``agent.output_type`` (this is the only thing that breaks
   if generic ``BaseModel`` deserialization is wrong).
@@ -33,7 +33,7 @@ from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
 from murmur.backends._inmemory_broker import InMemoryBroker
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.runtime import AgentRuntime
 from murmur.types import TaskSpec, TrustLevel
@@ -184,7 +184,7 @@ async def pipeline(
     broker = InMemoryBroker()
     publisher = AgentRuntime(broker_instance=broker, runtime_id="rt-research")
 
-    worker_backend = ThreadBackend()
+    worker_backend = AsyncBackend()
     worker_backend._build_pa_agent = _make_canned_pa_factory()  # ty: ignore[invalid-assignment]  # test seam
     worker_runtime = AgentRuntime(backend=worker_backend)
 
@@ -289,7 +289,7 @@ async def test_pipeline_lifecycle_hooks_fire_for_every_dispatch(
     broker = InMemoryBroker()
     publisher = AgentRuntime(broker_instance=broker, runtime_id="rt-hooks")
 
-    worker_backend = ThreadBackend()
+    worker_backend = AsyncBackend()
     worker_backend._build_pa_agent = _make_canned_pa_factory(n_subquestions=10)  # ty: ignore[invalid-assignment]
     worker_runtime = AgentRuntime(backend=worker_backend)
 

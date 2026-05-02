@@ -22,6 +22,7 @@ import structlog
 
 from murmur.cli.run import register_run
 from murmur.cli.serve import register_serve
+from murmur.cli.status import register_status
 from murmur.cli.validate import register_validate
 from murmur.cli.worker import register_worker
 
@@ -41,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     register_validate(sub)
     register_worker(sub)
     register_serve(sub)
+    register_status(sub)
     return parser
 
 

@@ -11,13 +11,13 @@ Topology::
     runtime --publish--> murmur.{agent}.tasks ---> Worker
                                                       |
                                                       v
-                                             ThreadBackend dispatch
+                                             AsyncBackend dispatch
                                                       |
               ResultCollector  <----publish---- murmur.results.{runtime_id}
 
-This backend is a transport for ThreadBackend invocations across
+This backend is a transport for AsyncBackend invocations across
 machines — it never runs the LLM itself. It publishes tasks, the Worker
-consumes them, dispatches via ThreadBackend's path locally, and
+consumes them, dispatches via AsyncBackend's path locally, and
 publishes the result back.
 
 Satisfies :class:`murmur.core.protocols.Backend` structurally — required
@@ -291,7 +291,7 @@ class JobBackend:
         """Fire the publisher-side AGENT_DISPATCHED event.
 
         Always emitted on broker dispatch — independent of
-        ``publish_events``. ThreadBackend has no equivalent because its
+        ``publish_events``. AsyncBackend has no equivalent because its
         AGENT_SPAWNED event already happens publisher-side; for the
         broker path the spawn doesn't fire until the worker picks the
         message up, which can be seconds away. AGENT_DISPATCHED gives

@@ -34,4 +34,4 @@ The `[server]` extra is required for these imports — see
 
 `AgentRouter.install_exception_handlers(app)` — classmethod, called once
 on the host FastAPI app to wire Murmur's domain errors to the HTTP
-status codes in `server/errors.py`. Decision D13.
+status codes in `server/errors.py`.

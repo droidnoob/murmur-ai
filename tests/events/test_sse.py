@@ -163,7 +163,7 @@ async def test_runtime_emits_events_to_sse_subscriber() -> None:
     from pydantic_ai.models.test import TestModel
 
     from murmur.agent import Agent
-    from murmur.backends.thread import ThreadBackend
+    from murmur.backends.async_backend import AsyncBackend
     from murmur.context.null import NullContextPasser
     from murmur.events import LogEventEmitter, MultiEventEmitter
     from murmur.runtime import AgentRuntime
@@ -184,7 +184,7 @@ async def test_runtime_emits_events_to_sse_subscriber() -> None:
     sse = SSEEventEmitter(heartbeat_interval=60.0)
     multi = MultiEventEmitter([LogEventEmitter(), sse])
 
-    backend = ThreadBackend(event_emitter=multi)
+    backend = AsyncBackend(event_emitter=multi)
     backend._build_pa_agent = _stub  # ty: ignore[invalid-assignment]
     runtime = AgentRuntime(backend=backend, event_emitter=multi)
     agent = Agent(

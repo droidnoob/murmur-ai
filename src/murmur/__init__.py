@@ -11,6 +11,7 @@ adapters in :mod:`murmur.interop`.
 from murmur.agent import Agent
 from murmur.groups import AgentGroup, Edge
 from murmur.runtime import AgentRuntime
+from murmur.templates import AgentTemplate
 from murmur.types import (
     AgentContext,
     AgentHandle,
@@ -28,6 +29,7 @@ __all__ = [
     "AgentHandle",
     "AgentResult",
     "AgentRuntime",
+    "AgentTemplate",
     "Edge",
     "FanOut",
     "ResultMetadata",

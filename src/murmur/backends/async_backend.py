@@ -1,4 +1,4 @@
-"""ThreadBackend — asyncio-based, in-process execution.
+"""AsyncBackend — asyncio-based, in-process execution.
 
 The default backend. Zero configuration, no broker required. Suitable for
 local development and single-host deployments.
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from murmur.core.protocols.events import EventEmitter
 
 
-class ThreadBackend:
+class AsyncBackend:
     """Asyncio task-based backend. Default for ``AgentRuntime``."""
 
     name: str = "thread"
@@ -326,4 +326,4 @@ def _extract_tokens(pa_result: object) -> int:
     return inp + out
 
 
-__all__ = ["ThreadBackend"]
+__all__ = ["AsyncBackend"]

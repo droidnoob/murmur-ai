@@ -30,6 +30,7 @@ from pydantic_ai.builtin_tools import (
 from murmur.tools.executor import ToolExecutor
 from murmur.tools.mcp import mcp_http, mcp_sse, mcp_stdio
 from murmur.tools.registry import StaticToolProvider, ToolFunc, ToolRegistry
+from murmur.tools.spawn import SpawnResult, SpawnSpec, make_spawn_agents_tool
 
 __all__ = [
     "AbstractBuiltinTool",
@@ -38,6 +39,8 @@ __all__ = [
     "ImageGenerationTool",
     "MCPServerTool",
     "MemoryTool",
+    "SpawnResult",
+    "SpawnSpec",
     "StaticToolProvider",
     "ToolExecutor",
     "ToolFunc",
@@ -45,6 +48,7 @@ __all__ = [
     "WebFetchTool",
     "WebSearchTool",
     "XSearchTool",
+    "make_spawn_agents_tool",
     "mcp_http",
     "mcp_sse",
     "mcp_stdio",

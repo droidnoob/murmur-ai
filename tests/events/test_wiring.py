@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.events import EventType, RuntimeEvent
 from murmur.runtime import AgentRuntime
@@ -65,7 +65,7 @@ async def _stub_pa_agent(
 
 
 def _make_runtime(emitter: _CollectingEmitter) -> AgentRuntime:
-    backend = ThreadBackend(event_emitter=emitter)
+    backend = AsyncBackend(event_emitter=emitter)
     backend._build_pa_agent = _stub_pa_agent  # ty: ignore[invalid-assignment]  # test seam
     return AgentRuntime(backend=backend, event_emitter=emitter)
 
@@ -128,7 +128,7 @@ async def test_completed_event_includes_duration_and_tokens() -> None:
 
 async def test_failing_run_emits_agent_failed() -> None:
     emitter = _CollectingEmitter()
-    backend = ThreadBackend(event_emitter=emitter)
+    backend = AsyncBackend(event_emitter=emitter)
 
     async def boom(*_: Any, **__: Any) -> pydantic_ai.Agent[None, Any]:
         raise RuntimeError("boom")

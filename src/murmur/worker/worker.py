@@ -1,14 +1,14 @@
 """``Worker`` — the broker-side consumer.
 
 A ``Worker`` subscribes to broker topics for a set of agents and dispatches
-incoming tasks through an internal ``ThreadBackend``-backed runtime, then
+incoming tasks through an internal ``AsyncBackend``-backed runtime, then
 publishes the result back to the message's ``reply_to``. Lifecycle hooks
 let users plug in observability without subclassing.
 
 The worker's runtime MUST be a *local* one — give it a broker URL and
 you get an infinite loop where tasks are republished instead of
 dispatched. The constructor builds a default ``AgentRuntime()`` (no
-broker, ThreadBackend) when none is supplied.
+broker, AsyncBackend) when none is supplied.
 
 Satisfies :class:`murmur.core.protocols.worker.Worker` structurally.
 """
@@ -62,7 +62,7 @@ class Worker:
 
         self._broker = broker
         self._agents: dict[str, Agent] = dict(agents)
-        # NB: the worker's runtime MUST be ThreadBackend-backed. Passing a
+        # NB: the worker's runtime MUST be AsyncBackend-backed. Passing a
         # broker-backed runtime here re-publishes tasks → infinite loop.
         #
         # When constructing our own runtime, we wire the distributed event

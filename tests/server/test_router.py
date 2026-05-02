@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.runtime import AgentRuntime
 from murmur.server.app import AgentServer
@@ -55,7 +55,7 @@ def _make_factory() -> Any:
 
 
 def _runtime() -> AgentRuntime:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = _make_factory()  # noqa: SLF001
     return AgentRuntime(backend=backend)
 
@@ -210,8 +210,8 @@ def test_router_subclasses_apirouter() -> None:
 
 
 def test_broker_returns_none_for_thread_mode_runtime() -> None:
-    """Thread-mode runtimes have no broker — accessor returns None."""
-    router = AgentRouter(runtime=_runtime())  # default thread-mode
+    """In-process runtimes have no broker — accessor returns None."""
+    router = AgentRouter(runtime=_runtime())  # default in-process
     assert router.broker is None
 
 
@@ -243,8 +243,8 @@ def test_broker_returns_faststream_broker_when_url_is_kafka() -> None:
 
 
 async def test_lifespan_thread_mode_is_noop() -> None:
-    """Thread-mode runtime: lifespan startup/shutdown does nothing visible."""
-    router = AgentRouter(runtime=_runtime())  # default thread-mode
+    """In-process runtime: lifespan startup/shutdown does nothing visible."""
+    router = AgentRouter(runtime=_runtime())  # default in-process
     await router._lifespan_startup()  # noqa: SLF001
     assert router._worker is None  # noqa: SLF001
     await router._lifespan_shutdown()  # noqa: SLF001
@@ -259,7 +259,7 @@ async def test_lifespan_starts_broker_and_worker_in_memory_mode() -> None:
     try to call Anthropic for real.
     """
     publish_runtime = AgentRuntime(broker="memory://")
-    worker_runtime = _runtime()  # thread-mode with TestModel factory
+    worker_runtime = _runtime()  # in-process with TestModel factory
     router = AgentRouter(
         runtime=publish_runtime,
         start_workers=True,

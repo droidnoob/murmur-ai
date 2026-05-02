@@ -863,6 +863,21 @@ Anything beyond these is out of Phase 1. (Phase 2 adds `murmur serve`. Phase 3 a
 
 ---
 
+## 21a. Documentation — keep in sync
+
+The docs site lives in `docs/` and is built with `mkdocs-material` (see `mkdocs.yml`). It ships alongside the code, not separately. When a change touches the public API, observable behaviour, or a documented decision, update the relevant page in the same PR — don't defer to "docs sweep later". The pages most likely to drift:
+
+- `docs/api/*.md` — auto-rendered from docstrings via `mkdocstrings`. Adding a new public symbol means adding a `:::` directive on the matching page (see `docs/api/index.md` for the package map). Renaming or removing one means updating the directive.
+- `docs/concepts/*.md` — long-form prose about architecture, runtime, agents, tools, events, cost, MCP. Update when behaviour or wiring changes.
+- `docs/guides/*.md` — distributed / embedded / migration recipes. Update when the surface those recipes use changes.
+- `docs/index.md` — landing page snippets must compile against the current API.
+
+Verification: `uv sync --group docs && uv run mkdocs build --strict`. `--strict` catches dead links, missing pages in nav, and unresolved `mkdocstrings` references. The CI workflow (`.github/workflows/docs.yml`) runs the same on every PR.
+
+If a change is *purely* internal (refactor, test-only, package layout) and doesn't move the public surface, docs probably don't need touching — but err toward updating when in doubt.
+
+---
+
 ## 22. What NOT to build
 
 Coding agents over-build. These are explicit non-goals.
@@ -949,6 +964,7 @@ uv run murmur worker start --agents researcher --broker kafka://localhost:9092
 4. If it touches `core/`, double-check the import direction.
 5. If a new package needs to be created, confirm with the user — only Phase 1 packages should exist now.
 6. Ask the user before adding a new top-level dependency.
+
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker

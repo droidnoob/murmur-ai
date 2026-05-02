@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.core.errors import BudgetExceededError
 from murmur.events import EventType, RuntimeEvent
@@ -287,7 +287,7 @@ async def test_runtime_with_budget_blocks_after_exhaustion() -> None:
     budget = TokenBudget(limit=1)  # tiny — already-exhausted state
     await budget.consume(1)
 
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = await _stub_pa_agent_with_tokens(0)  # ty: ignore[invalid-assignment]
     runtime = AgentRuntime(
         backend=backend,
@@ -300,7 +300,7 @@ async def test_runtime_with_budget_blocks_after_exhaustion() -> None:
 
 async def test_runtime_without_budget_skips_middleware() -> None:
     """RuntimeOptions.token_budget=None (default) — no middleware overhead."""
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = await _stub_pa_agent_with_tokens(0)  # ty: ignore[invalid-assignment]
     runtime = AgentRuntime(backend=backend)  # default options, no budget
 

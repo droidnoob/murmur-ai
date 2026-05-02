@@ -22,7 +22,7 @@ from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
 from murmur.backends._inmemory_broker import InMemoryBroker
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.core.errors import AllAgentsFailedError, TopologyError
 from murmur.groups.edge import Edge
@@ -182,7 +182,7 @@ async def _wire(
 ) -> tuple[AgentRuntime, Worker]:
     broker = InMemoryBroker()
     publisher = AgentRuntime(broker_instance=broker, runtime_id="rt-group")
-    worker_backend = ThreadBackend()
+    worker_backend = AsyncBackend()
     worker_backend._build_pa_agent = factory or _make_canned_factory()
     worker_runtime = AgentRuntime(backend=worker_backend)
     worker = Worker(
@@ -560,7 +560,7 @@ async def _wire_multi(
 ) -> tuple[AgentRuntime, Worker]:
     broker = InMemoryBroker()
     publisher = AgentRuntime(broker_instance=broker, runtime_id="rt-multi")
-    worker_backend = ThreadBackend()
+    worker_backend = AsyncBackend()
     worker_backend._build_pa_agent = factory
     worker_runtime = AgentRuntime(backend=worker_backend)
     worker = Worker(

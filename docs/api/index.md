@@ -12,7 +12,8 @@ package, auto-generated from docstrings.
 
 | Page | Symbols |
 |---|---|
-| [Agents & types](agent.md) | `Agent`, `TaskSpec`, `AgentResult`, `AgentHandle`, `AgentContext`, `ResultMetadata`, `TrustLevel` |
+| [Agents & types](agent.md) | `Agent`, `AgentTemplate`, `TaskSpec`, `AgentResult`, `AgentHandle`, `AgentContext`, `ResultMetadata`, `TrustLevel` |
+| [Models](models.md) | `ConcurrencyLimiter`, `ConcurrencyLimit`, `AbstractConcurrencyLimiter` |
 | [Runtime](runtime.md) | `AgentRuntime`, `RuntimeOptions` |
 | [Groups](groups.md) | `AgentGroup`, `Edge`, `EdgeMapper`, `FanOut`, `get_fan_out_field` |
 | [Events](events.md) | `RuntimeEvent`, `EventType`, `LogEventEmitter`, `SSEEventEmitter`, `MultiEventEmitter`, `BrokerEventBridge` |
@@ -20,6 +21,7 @@ package, auto-generated from docstrings.
 | [Tools](tools.md) | `ToolRegistry`, `StaticToolProvider`, `ToolExecutor`, `ToolFunc`, `mcp_stdio` / `mcp_http` / `mcp_sse`, built-in tools |
 | [Context passers](context.md) | `FullContextPasser`, `NullContextPasser` |
 | [Server](server.md) | `AgentServer`, `AgentRouter`, `ErrorResponse` |
+| [MCP server](mcp_server.md) | `AgentServer.register_mcp`, `AgentServer.serve_mcp`, `MCPEnrollment` |
 | [Worker](worker.md) | `Worker` |
 | [Runs](runs.md) | `RunStore`, `InMemoryRunStore`, `SQLiteRunStore`, `RocksDBRunStore`, `RedisRunStore`, value types |
 | [Interop](interop.md) | `from_pydantic_ai`, `as_faststream_handler` |

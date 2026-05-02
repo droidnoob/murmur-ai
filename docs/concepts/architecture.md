@@ -60,7 +60,7 @@ concrete implementations.
 
 | Protocol | Concretes |
 |---|---|
-| `Backend` | `ThreadBackend`, `JobBackend` |
+| `Backend` | `AsyncBackend`, `JobBackend` |
 | `ContextPasser` | `NullContextPasser`, `FullContextPasser` |
 | `ToolProvider` | `StaticToolProvider` |
 | `ToolsetProvider` | `MCPToolsetProvider` |
@@ -76,12 +76,12 @@ the **same shared contract suite** (e.g. `BackendContract`,
 ## Execution backends
 
 ```
-ThreadBackend     ← asyncio.create_task — lightweight, default, zero-config
+AsyncBackend     ← asyncio.create_task — lightweight, default, zero-config
 JobBackend        ← FastStream subscriber/publisher (Kafka / NATS / RabbitMQ / Redis)
-ContainerBackend  ← Docker SDK — full isolation for untrusted context  (Phase 4)
+ContainerBackend  ← Docker SDK — full isolation for untrusted context  (queued)
 ```
 
-`ThreadBackend` and `JobBackend` are both first-class. `JobBackend`
+`AsyncBackend` and `JobBackend` are both first-class. `JobBackend`
 activates when you pass a broker URL.
 
 ## Tool execution flow
@@ -114,7 +114,7 @@ class TrustLevel(StrEnum):
     SANDBOX = "sandbox"  # no tools, pure reasoning
 ```
 
-Today the gate is enforced for native tools and MCP toolsets. Phase 4
-adds the full enforcement matrix (`SANDBOX` agents always run via
-`ContainerBackend` regardless of caller's request, etc.) and cascading
-spawn controls.
+Today the gate is enforced for native tools and MCP toolsets. The full
+enforcement matrix (`SANDBOX` agents always run via `ContainerBackend`
+regardless of caller's request, etc.) and cascading-spawn controls are
+queued for a future release.

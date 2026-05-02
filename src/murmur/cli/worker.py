@@ -2,7 +2,7 @@
 
 Loads agents from a YAML registry, connects to the named broker, runs
 :class:`murmur.worker.worker.Worker` until SIGTERM / SIGINT. The worker's
-inner runtime is always thread-mode (per the worker docstring: a
+inner runtime is always in-process (per the worker docstring: a
 broker-mode runtime would re-publish tasks).
 
 Discovery currently goes through ``YamlRegistry`` rooted at ``--specs``
@@ -97,6 +97,16 @@ def register_worker(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         metavar="GLOB",
         help="Filename glob to exclude from reload watching. May be repeated.",
     )
+    start.add_argument(
+        "--uvloop",
+        action="store_true",
+        help=(
+            "Use uvloop for the asyncio event loop (POSIX only). Requires "
+            "the [uvloop] extra. Equivalent to MURMUR_USE_UVLOOP=1. Falls "
+            "back to the default loop with a warning on Windows or when "
+            "the extra isn't installed."
+        ),
+    )
     start.set_defaults(handler=_start)
 
 
@@ -111,6 +121,9 @@ def _start(args: argparse.Namespace) -> int:
                 includes=args.reload_include,
                 excludes=args.reload_exclude,
             )
+    from murmur.cli._uvloop import install_uvloop_policy, resolve_uvloop_enabled
+
+    install_uvloop_policy(resolve_uvloop_enabled(getattr(args, "uvloop", False)))
     return asyncio.run(_run_worker(args))
 
 
@@ -162,7 +175,7 @@ async def _run_worker(args: argparse.Namespace) -> int:
     except SpecValidationError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 2
-    worker_runtime = AgentRuntime()  # ThreadBackend internally
+    worker_runtime = AgentRuntime()  # AsyncBackend internally
 
     # Reach into the publisher runtime to recover the constructed Broker
     # and reuse it for the worker. AgentRuntime exposes ``backend`` and the
@@ -172,7 +185,7 @@ async def _run_worker(args: argparse.Namespace) -> int:
     if worker_broker is None:
         print(
             f"[error] runtime did not produce a Broker for url {args.broker!r}; "
-            "is this a thread-mode URL?",
+            "is this a in-process URL?",
             file=sys.stderr,
         )
         return 2

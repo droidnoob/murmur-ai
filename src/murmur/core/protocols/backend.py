@@ -4,7 +4,7 @@ Required surface: ``spawn``, ``kill``, ``status``. ``result`` is added so the
 runtime can retrieve a finished agent's output without the caller juggling
 futures itself.
 
-Concrete backends (``ThreadBackend``, ``JobBackend``, future ``ProcessBackend``
+Concrete backends (``AsyncBackend``, ``JobBackend``, future ``ProcessBackend``
 and ``ContainerBackend``) match this Protocol structurally — they do **not**
 inherit from it.
 """

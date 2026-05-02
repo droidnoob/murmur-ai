@@ -32,7 +32,7 @@ class EventType(StrEnum):
     task is published to the broker — *before* the worker picks it up and
     fires :data:`AGENT_SPAWNED`. Gives the publisher local visibility into
     "task accepted by broker" even when the distributed event bridge is
-    off. ThreadBackend never emits this; AGENT_SPAWNED is the equivalent
+    off. AsyncBackend never emits this; AGENT_SPAWNED is the equivalent
     head-of-run signal.
 
     Payload: ``{"backend": str, "broker": str | None, "trust_level": str}``."""

@@ -2,7 +2,7 @@
 
 Closes the loop: a publisher-side ``JobBackend`` publishes a ``TaskMessage``
 onto an in-process broker; a ``Worker`` consumes it, dispatches via its
-inner ``ThreadBackend`` runtime (with ``TestModel`` injected — no real LLM),
+inner ``AsyncBackend`` runtime (with ``TestModel`` injected — no real LLM),
 and publishes a ``ResultMessage`` back. The original ``runtime.run`` /
 ``runtime.gather`` call resolves with the structured output.
 """
@@ -19,7 +19,7 @@ from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
 from murmur.backends._inmemory_broker import InMemoryBroker
-from murmur.backends.thread import ThreadBackend
+from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.runtime import AgentRuntime
 from murmur.types import TaskSpec, TrustLevel
@@ -43,7 +43,7 @@ async def _stub_pa_agent(
 
 
 def _make_worker_runtime() -> AgentRuntime:
-    backend = ThreadBackend()
+    backend = AsyncBackend()
     backend._build_pa_agent = _stub_pa_agent  # ty: ignore[invalid-assignment]  # test seam
     return AgentRuntime(backend=backend)
 
