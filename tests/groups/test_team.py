@@ -498,16 +498,13 @@ async def test_delegate_tool_normalises_runtime_errors_to_tool_execution_error(
         await runtime.shutdown()
 
 
-async def test_run_group_with_agent_team_raises_not_implemented(
+async def test_run_group_dispatches_agent_team_and_releases_tool_registration(
     coordinator: Agent, billing: Agent
 ) -> None:
-    """``AgentRuntime.run_group(team, ...)`` raises ``NotImplementedError``
-    until the polymorphic team-dispatch lands in the next bead — the
-    runner expected ``AgentGroup.topology`` and would crash otherwise.
-    Surface the WIP state cleanly so the public API doesn't lie about
-    being functional.
+    """``AgentRuntime.run_group(team, ...)`` runs the coordinator with
+    the delegate tool registered, then unregisters it on exit so the
+    runtime's tool registry is clean for subsequent runs.
     """
-    from murmur.runtime import AgentRuntime
     from murmur.types import TaskSpec
 
     team = AgentTeam(
@@ -516,10 +513,25 @@ async def test_run_group_with_agent_team_raises_not_implemented(
         delegates={"billing": billing},
         output_type=Resolution,
     )
-    runtime = AgentRuntime()
+    runtime = _canned_runtime(
+        {
+            coordinator.name: Resolution(summary="ok").model_dump(),
+            billing.name: Resolution(summary="paid").model_dump(),
+        }
+    )
+    from murmur.types import AgentResult
+
+    pre_tools = runtime.tool_registry.names()
     try:
-        with pytest.raises(NotImplementedError, match="AgentTeam"):
-            await runtime.run_group(team, TaskSpec(input="..."))
+        result = await runtime.run_group(team, TaskSpec(input="..."))
+        # Team dispatch returns the coordinator's AgentResult — narrow
+        # the union (run_group's return type widens to allow GroupResult
+        # for multi-leaf AgentGroup topologies).
+        assert isinstance(result, AgentResult)
+        assert result.is_ok()
+        assert result.agent_name == coordinator.name
+        # Per-run tool scope: registry is restored to its pre-run state.
+        assert runtime.tool_registry.names() == pre_tools
     finally:
         await runtime.shutdown()
 

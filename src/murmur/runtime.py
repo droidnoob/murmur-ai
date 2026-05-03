@@ -809,19 +809,35 @@ class AgentRuntime:
         from murmur.events.types import EventType, RuntimeEvent
         from murmur.groups.runner import run_group as _run_group
         from murmur.groups.team import AgentTeam as _AgentTeam
+        from murmur.groups.team_runner import run_team as _run_team
 
         if isinstance(group, _AgentTeam):
-            # ``AgentTeam`` dispatch — auto-register the typed delegate
-            # tool on the coordinator and run that single agent — lands
-            # in a follow-up work unit on the coordination-v2 epic.
-            # Until then, surface a clear error rather than letting the
-            # AgentGroup runner crash on the missing ``topology``
-            # attribute.
-            raise NotImplementedError(
-                "AgentRuntime.run_group does not yet dispatch AgentTeam; "
-                "the polymorphic team-dispatch path is the next bead on "
-                "the coordination-v2 epic. Use AgentGroup for now."
+            start = time.perf_counter()
+            await self._emitter.emit(
+                RuntimeEvent(
+                    event_type=EventType.GROUP_STARTED,
+                    agent_name=group.name,
+                    task_id=task.id,
+                    trace_id=task.request_id,
+                    payload={
+                        "shape": "team",
+                        "delegate_count": len(group.delegates),
+                    },
+                )
             )
+            try:
+                return await _run_team(self, group, task)
+            finally:
+                duration_ms = int((time.perf_counter() - start) * 1000)
+                await self._emitter.emit(
+                    RuntimeEvent(
+                        event_type=EventType.GROUP_COMPLETED,
+                        agent_name=group.name,
+                        task_id=task.id,
+                        trace_id=task.request_id,
+                        payload={"duration_ms": duration_ms, "shape": "team"},
+                    )
+                )
 
         start = time.perf_counter()
         await self._emitter.emit(

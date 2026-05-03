@@ -78,6 +78,16 @@ class ToolRegistry:
     def names(self) -> frozenset[str]:
         return frozenset(self._tools.keys())
 
+    def unregister(self, name: str) -> None:
+        """Remove ``name`` from the registry. Idempotent — silent on miss.
+
+        Used for short-lived tool registrations (e.g. ``AgentTeam``'s
+        per-run ``delegate`` tool) where the registration scope is one
+        ``runtime.run_group(team, ...)`` call rather than the runtime's
+        lifetime.
+        """
+        self._tools.pop(name, None)
+
 
 __all__ = [
     "StaticToolProvider",
