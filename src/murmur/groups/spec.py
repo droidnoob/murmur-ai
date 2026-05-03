@@ -23,7 +23,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from murmur.core.errors import TopologyError
+from pydantic import BaseModel
+
+from murmur.core.errors import SpecValidationError, TopologyError
+from murmur.groups._introspection import get_fan_out_field
 from murmur.groups.edge import Edge
 
 if TYPE_CHECKING:
@@ -107,6 +110,12 @@ class AgentGroup:
                 f"AgentGroup {self.name!r} has no terminal node (every node "
                 f"has at least one outgoing edge)"
             )
+        # Heterogeneous fan-out: validate routing tables eagerly so
+        # configuration errors (orphan agent, missing union member,
+        # duplicate input_type, missing input_type) surface at
+        # construction rather than at first dispatch.
+        for src in self.topology:
+            self._heterogeneous_dispatch_for(src)
 
     @property
     def agents(self) -> tuple[Agent, ...]:
@@ -196,6 +205,83 @@ class AgentGroup:
         if seen != len(self.topology):  # pragma: no cover — caught by _has_cycle
             raise TopologyError(f"AgentGroup {self.name!r} topology has a cycle")
         return tuple(tiers)
+
+    def _heterogeneous_dispatch_for(
+        self, source: Agent
+    ) -> dict[type[BaseModel], Agent] | None:
+        """Build the type-routing dispatch table for a heterogeneous fan-out source.
+
+        Returns ``None`` when the source's ``output_type`` has no
+        :data:`FanOut` field, when the FanOut item type is a single type
+        (single-type fan-out — the existing path handles it), or when
+        the source has no outgoing targets at all (terminal). Otherwise
+        returns a frozen ``{item_type: downstream_agent}`` mapping.
+
+        Validators raise :class:`SpecValidationError` on:
+
+        - A downstream agent with no ``Agent.input_type`` declared —
+          required for typed routing under a heterogeneous source.
+        - Two downstream agents claiming the same ``input_type`` —
+          ambiguous routing under one source.
+        - A union member with no matching downstream in the source's
+          outgoing targets — items of that type would have nowhere to go.
+        - A downstream agent whose ``input_type`` doesn't match any
+          union member — the agent would never receive any items.
+
+        Called eagerly at construction (``__post_init__``) so misconfigured
+        topologies fail fast; called again at runtime by the runner so the
+        table itself is never stored on the frozen ``AgentGroup``.
+        """
+        fan_out = get_fan_out_field(source.output_type)
+        if fan_out is None:
+            return None
+        _field_name, item_types = fan_out
+        if len(item_types) <= 1:
+            return None  # Single-type fan-out — existing path handles it.
+
+        targets: list[Agent] = []
+        for edge in self.outgoing_edges(source):
+            targets.extend(edge.to)
+        if not targets:
+            # Terminal source — no routing to validate.
+            return None
+
+        table: dict[type[BaseModel], Agent] = {}
+        seen: dict[type[BaseModel], str] = {}
+        for downstream in targets:
+            if downstream.input_type is None:
+                raise SpecValidationError(
+                    f"agent {downstream.name!r} downstream of fan-out source "
+                    f"{source.name!r} (heterogeneous union "
+                    f"{[t.__name__ for t in item_types]}) must declare "
+                    f"Agent.input_type for typed routing"
+                )
+            existing = seen.get(downstream.input_type)
+            if existing is not None:
+                raise SpecValidationError(
+                    f"agents {existing!r} and {downstream.name!r} both claim "
+                    f"input_type {downstream.input_type.__name__!r}; ambiguous "
+                    f"routing under fan-out source {source.name!r}"
+                )
+            seen[downstream.input_type] = downstream.name
+            table[downstream.input_type] = downstream
+
+        missing = [t for t in item_types if t not in table]
+        if missing:
+            raise SpecValidationError(
+                f"fan-out source {source.name!r} has union members "
+                f"{[t.__name__ for t in missing]} with no matching downstream "
+                f"agent (declared targets: "
+                f"{[a.name for a in targets]})"
+            )
+        orphans = [a.name for a in targets if a.input_type not in item_types]
+        if orphans:
+            raise SpecValidationError(
+                f"agents {orphans!r} downstream of fan-out source "
+                f"{source.name!r} have input_types not in the union "
+                f"{[t.__name__ for t in item_types]}"
+            )
+        return table
 
     def _has_cycle(self) -> bool:
         white: set[Agent] = set(self.topology.keys())

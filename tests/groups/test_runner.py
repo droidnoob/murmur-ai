@@ -1208,3 +1208,277 @@ async def test_run_group_cancels_inflight_sibling_on_failfast(
         # Release the gate so any orphaned worker-side coroutine settles.
         block_event.set()
         await worker.stop()
+
+
+# ---------------------------------------------------------------------------
+# Heterogeneous fan-out — FanOut[list[T1 | T2 | ...]]
+# ---------------------------------------------------------------------------
+
+
+class _Question(BaseModel):
+    text: str
+
+
+class _Statement(BaseModel):
+    claim: str
+
+
+class _Command(BaseModel):
+    verb: str
+
+
+class _Hetero(BaseModel):
+    items: FanOut[list[_Question | _Statement | _Command]]
+
+
+class _Routed(BaseModel):
+    """Per-item handler output. ``kind`` records which agent processed it."""
+
+    kind: str
+
+
+def _hetero_factory(canned: dict[str, Any]) -> Any:
+    async def build(
+        agent: Agent, _allowed: frozenset[str], _task_id: str
+    ) -> pydantic_ai.Agent[None, Any]:
+        out = canned.get(agent.name)
+        if out is None:
+            raise ValueError(f"no canned output for {agent.name!r}")
+        return pydantic_ai.Agent(
+            model=TestModel(custom_output_args=out),
+            instructions=agent.instructions,
+            output_type=agent.output_type,
+        )
+
+    return build
+
+
+@pytest.fixture
+def hetero_source_agent() -> Agent:
+    return Agent(
+        name="hetero-source",
+        model="anthropic:claude-sonnet-4-6",
+        instructions="decompose into mixed item types",
+        output_type=_Hetero,
+        trust_level=TrustLevel.SANDBOX,
+        context_passer=NullContextPasser(),
+    )
+
+
+@pytest.fixture
+def question_agent() -> Agent:
+    return Agent(
+        name="q-handler",
+        model="anthropic:claude-sonnet-4-6",
+        instructions="handle questions",
+        input_type=_Question,
+        output_type=_Routed,
+        trust_level=TrustLevel.SANDBOX,
+        context_passer=NullContextPasser(),
+    )
+
+
+@pytest.fixture
+def statement_agent() -> Agent:
+    return Agent(
+        name="s-handler",
+        model="anthropic:claude-sonnet-4-6",
+        instructions="handle statements",
+        input_type=_Statement,
+        output_type=_Routed,
+        trust_level=TrustLevel.SANDBOX,
+        context_passer=NullContextPasser(),
+    )
+
+
+@pytest.fixture
+def command_agent() -> Agent:
+    return Agent(
+        name="c-handler",
+        model="anthropic:claude-sonnet-4-6",
+        instructions="handle commands",
+        input_type=_Command,
+        output_type=_Routed,
+        trust_level=TrustLevel.SANDBOX,
+        context_passer=NullContextPasser(),
+    )
+
+
+async def _wire_hetero(
+    source: Agent,
+    handlers: tuple[Agent, ...],
+    summary: Agent,
+    *,
+    factory: Any,
+) -> tuple[AgentRuntime, Worker]:
+    broker = InMemoryBroker()
+    publisher = AgentRuntime(broker_instance=broker, runtime_id="rt-hetero")
+    worker_backend = AsyncBackend()
+    worker_backend._build_pa_agent = factory
+    worker_runtime = AgentRuntime(backend=worker_backend)
+    agents = {source.name: source, summary.name: summary}
+    for h in handlers:
+        agents[h.name] = h
+    worker = Worker(
+        broker=broker, agents=agents, runtime=worker_runtime, concurrency=10
+    )
+    await worker.start()
+    return publisher, worker
+
+
+async def test_run_group_heterogeneous_fanout_routes_items_by_exact_type(
+    hetero_source_agent: Agent,
+    question_agent: Agent,
+    statement_agent: Agent,
+    command_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """End-to-end: a source emitting ``FanOut[list[Q | S | C]]`` with one
+    of each type fires each handler exactly once for the matching item.
+    """
+    items: list[_Question | _Statement | _Command] = [
+        _Question(text="why?"),
+        _Statement(claim="because"),
+        _Command(verb="run"),
+    ]
+    canned = {
+        hetero_source_agent.name: _Hetero(items=items).model_dump(),
+        question_agent.name: _Routed(kind="q").model_dump(),
+        statement_agent.name: _Routed(kind="s").model_dump(),
+        command_agent.name: _Routed(kind="c").model_dump(),
+        summary_agent.name: _final().model_dump(),
+    }
+    factory = _hetero_factory(canned)
+    publisher, worker = await _wire_hetero(
+        hetero_source_agent,
+        (question_agent, statement_agent, command_agent),
+        summary_agent,
+        factory=factory,
+    )
+
+    captured: dict[str, Any] = {}
+
+    def aggregator(inputs):  # noqa: ANN001
+        captured["inputs"] = inputs
+        total = sum(len(v) if isinstance(v, list) else 1 for v in inputs.values() if v)
+        return TaskSpec(input=f"agg {total}")
+
+    try:
+        crew = AgentGroup(
+            name="hetero-3way",
+            topology={
+                hetero_source_agent: Edge(
+                    to=(question_agent, statement_agent, command_agent)
+                ),
+                question_agent: Edge(to=(summary_agent,), mapper=aggregator),
+                statement_agent: Edge(to=(summary_agent,)),
+                command_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        # Each handler ran on its one matching item — fan-out lists of size 1.
+        handler_names = (
+            question_agent.name,
+            statement_agent.name,
+            command_agent.name,
+        )
+        for handler_name in handler_names:
+            contribution = captured["inputs"][handler_name]
+            assert isinstance(contribution, list)
+            assert len(contribution) == 1
+            assert isinstance(contribution[0], _Routed)
+    finally:
+        await worker.stop()
+
+
+async def test_run_group_heterogeneous_fanout_repeated_type_fires_handler_n_times(
+    hetero_source_agent: Agent,
+    question_agent: Agent,
+    statement_agent: Agent,
+    command_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Three Question items + one Statement: the question handler runs
+    three times, statement handler runs once, command handler is skipped
+    (empty filter, returns []).
+    """
+    items: list[_Question | _Statement | _Command] = [
+        _Question(text="q1"),
+        _Question(text="q2"),
+        _Question(text="q3"),
+        _Statement(claim="s1"),
+    ]
+    canned = {
+        hetero_source_agent.name: _Hetero(items=items).model_dump(),
+        question_agent.name: _Routed(kind="q").model_dump(),
+        statement_agent.name: _Routed(kind="s").model_dump(),
+        command_agent.name: _Routed(kind="c").model_dump(),
+        summary_agent.name: _final().model_dump(),
+    }
+    factory = _hetero_factory(canned)
+    publisher, worker = await _wire_hetero(
+        hetero_source_agent,
+        (question_agent, statement_agent, command_agent),
+        summary_agent,
+        factory=factory,
+    )
+
+    captured: dict[str, Any] = {}
+
+    def aggregator(inputs):  # noqa: ANN001
+        captured["inputs"] = inputs
+        return TaskSpec(input="agg")
+
+    try:
+        crew = AgentGroup(
+            name="hetero-repeat",
+            topology={
+                hetero_source_agent: Edge(
+                    to=(question_agent, statement_agent, command_agent)
+                ),
+                question_agent: Edge(to=(summary_agent,), mapper=aggregator),
+                statement_agent: Edge(to=(summary_agent,)),
+                command_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        assert len(captured["inputs"][question_agent.name]) == 3
+        assert len(captured["inputs"][statement_agent.name]) == 1
+        # Command handler dispatched against an empty list → empty contribution.
+        assert captured["inputs"][command_agent.name] == []
+    finally:
+        await worker.stop()
+
+
+async def test_single_type_fanout_still_works_unchanged(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Backward compat: ``FanOut[list[T]]`` (single-type) takes the
+    existing path — no input_type required on downstream, no per-type
+    filtering, identical behaviour to before heterogeneous routing.
+    """
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+        crew = AgentGroup(
+            name="single-type-control",
+            topology={
+                head_agent: Edge(to=(minion_agent,)),  # no mapper — auto fan-out
+                minion_agent: Edge(
+                    to=(summary_agent,),
+                    mapper=lambda findings: TaskSpec(input=f"sum {len(findings)}"),
+                ),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        assert isinstance(result.output, FinalReport)
+        assert result.output.findings_count == N_MINIONS
+    finally:
+        await worker.stop()

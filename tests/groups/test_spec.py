@@ -7,10 +7,10 @@ from pydantic import BaseModel
 
 from murmur.agent import Agent
 from murmur.context.null import NullContextPasser
-from murmur.core.errors import TopologyError
+from murmur.core.errors import SpecValidationError, TopologyError
 from murmur.groups.edge import Edge
 from murmur.groups.spec import AgentGroup
-from murmur.types import TrustLevel
+from murmur.types import FanOut, TrustLevel
 
 
 class _Out(BaseModel):
@@ -201,3 +201,195 @@ def test_topological_tiers_within_tier_order_independent_of_unlock_order() -> No
     tiers = group.topological_tiers()
     assert tiers[0] == (a, b)
     assert tiers[1] == (c, d)
+
+
+# ---------------------------------------------------------------------------
+# Heterogeneous fan-out validators
+# ---------------------------------------------------------------------------
+
+
+class _ItemA(BaseModel):
+    a: int
+
+
+class _ItemB(BaseModel):
+    b: str
+
+
+class _ItemC(BaseModel):
+    c: float
+
+
+class _DecompUnion(BaseModel):
+    """Output type for a heterogeneous fan-out source."""
+
+    items: FanOut[list[_ItemA | _ItemB | _ItemC]]
+
+
+class _DecompSingle(BaseModel):
+    """Output type for the single-type fan-out path (control)."""
+
+    items: FanOut[list[_ItemA]]
+
+
+class _Final(BaseModel):
+    out: str
+
+
+def _typed_agent(
+    name: str,
+    *,
+    output_type: type[BaseModel],
+    input_type: type[BaseModel] | None = None,
+) -> Agent:
+    return Agent(
+        name=name,
+        model="anthropic:claude-sonnet-4-6",
+        instructions="...",
+        input_type=input_type,
+        output_type=output_type,
+        trust_level=TrustLevel.SANDBOX,
+        context_passer=NullContextPasser(),
+    )
+
+
+def test_heterogeneous_fanout_well_formed_topology_constructs() -> None:
+    """A correctly-wired heterogeneous source builds without error: every
+    union member has a matching downstream, every downstream's
+    ``input_type`` is in the union, and no two downstreams overlap.
+    """
+    src = _typed_agent("src", output_type=_DecompUnion)
+    a = _typed_agent("a", output_type=_Final, input_type=_ItemA)
+    b = _typed_agent("b", output_type=_Final, input_type=_ItemB)
+    c = _typed_agent("c", output_type=_Final, input_type=_ItemC)
+    AgentGroup(
+        name="hetero-ok",
+        topology={
+            src: Edge(to=(a, b, c)),
+            a: Edge.terminal(),
+            b: Edge.terminal(),
+            c: Edge.terminal(),
+        },
+    )
+
+
+def test_heterogeneous_fanout_missing_input_type_raises() -> None:
+    """A downstream of a heterogeneous source without ``input_type`` is
+    unrootable for typed dispatch — reject at construction.
+    """
+    src = _typed_agent("src", output_type=_DecompUnion)
+    a = _typed_agent("a", output_type=_Final, input_type=_ItemA)
+    b = _typed_agent("b", output_type=_Final, input_type=_ItemB)
+    untyped = _typed_agent("untyped", output_type=_Final, input_type=None)
+    with pytest.raises(SpecValidationError, match="must declare Agent.input_type"):
+        AgentGroup(
+            name="hetero-untyped",
+            topology={
+                src: Edge(to=(a, b, untyped)),
+                a: Edge.terminal(),
+                b: Edge.terminal(),
+                untyped: Edge.terminal(),
+            },
+        )
+
+
+def test_heterogeneous_fanout_duplicate_input_type_raises() -> None:
+    """Two downstreams claiming the same ``input_type`` make routing
+    ambiguous — reject."""
+    src = _typed_agent("src", output_type=_DecompUnion)
+    a1 = _typed_agent("a1", output_type=_Final, input_type=_ItemA)
+    a2 = _typed_agent("a2", output_type=_Final, input_type=_ItemA)
+    b = _typed_agent("b", output_type=_Final, input_type=_ItemB)
+    c = _typed_agent("c", output_type=_Final, input_type=_ItemC)
+    with pytest.raises(SpecValidationError, match="ambiguous routing"):
+        AgentGroup(
+            name="hetero-dup",
+            topology={
+                src: Edge(to=(a1, a2, b, c)),
+                a1: Edge.terminal(),
+                a2: Edge.terminal(),
+                b: Edge.terminal(),
+                c: Edge.terminal(),
+            },
+        )
+
+
+def test_heterogeneous_fanout_missing_union_member_raises() -> None:
+    """If the union has a member with no matching downstream, items of
+    that type would have nowhere to go — reject.
+    """
+    src = _typed_agent("src", output_type=_DecompUnion)
+    a = _typed_agent("a", output_type=_Final, input_type=_ItemA)
+    b = _typed_agent("b", output_type=_Final, input_type=_ItemB)
+    # Missing _ItemC handler.
+    with pytest.raises(SpecValidationError, match="no matching downstream agent"):
+        AgentGroup(
+            name="hetero-missing",
+            topology={
+                src: Edge(to=(a, b)),
+                a: Edge.terminal(),
+                b: Edge.terminal(),
+            },
+        )
+
+
+def test_heterogeneous_fanout_orphan_downstream_raises() -> None:
+    """A downstream whose ``input_type`` isn't in the union would never
+    receive any items — reject as a configuration bug.
+    """
+
+    class _Unrelated(BaseModel):
+        z: bool
+
+    src = _typed_agent("src", output_type=_DecompUnion)
+    a = _typed_agent("a", output_type=_Final, input_type=_ItemA)
+    b = _typed_agent("b", output_type=_Final, input_type=_ItemB)
+    c = _typed_agent("c", output_type=_Final, input_type=_ItemC)
+    orphan = _typed_agent("orphan", output_type=_Final, input_type=_Unrelated)
+    with pytest.raises(SpecValidationError, match="not in the union"):
+        AgentGroup(
+            name="hetero-orphan",
+            topology={
+                src: Edge(to=(a, b, c, orphan)),
+                a: Edge.terminal(),
+                b: Edge.terminal(),
+                c: Edge.terminal(),
+                orphan: Edge.terminal(),
+            },
+        )
+
+
+def test_single_type_fanout_does_not_require_input_type_on_downstream() -> None:
+    """Backward compat: ``FanOut[list[T]]`` (single-type) downstreams
+    don't need ``input_type``. The validator only fires for multi-member
+    union sources.
+    """
+    src = _typed_agent("src", output_type=_DecompSingle)
+    untyped = _typed_agent("untyped", output_type=_Final, input_type=None)
+    AgentGroup(
+        name="single-type-ok",
+        topology={
+            src: Edge(to=(untyped,)),
+            untyped: Edge.terminal(),
+        },
+    )
+
+
+def test_heterogeneous_fanout_split_across_multiple_edges_validates() -> None:
+    """Splitting union targets across separate ``Edge`` declarations
+    (one edge per downstream) still validates — the validator collects
+    targets across all outgoing edges of the source.
+    """
+    src = _typed_agent("src", output_type=_DecompUnion)
+    a = _typed_agent("a", output_type=_Final, input_type=_ItemA)
+    b = _typed_agent("b", output_type=_Final, input_type=_ItemB)
+    c = _typed_agent("c", output_type=_Final, input_type=_ItemC)
+    AgentGroup(
+        name="hetero-split-edges",
+        topology={
+            src: (Edge(to=(a,)), Edge(to=(b,)), Edge(to=(c,))),
+            a: Edge.terminal(),
+            b: Edge.terminal(),
+            c: Edge.terminal(),
+        },
+    )

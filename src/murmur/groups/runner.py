@@ -305,6 +305,29 @@ async def _dispatch_single_input(
     typed_outputs = _filter_successes(results[upstream], upstream_name=upstream.name)
     if not await _condition_fires(edge, upstream, node, typed_outputs):
         return _SKIPPED
+
+    # Heterogeneous fan-out: when the upstream's output_type carries a
+    # ``FanOut[list[T1 | T2 | ...]]`` field, each downstream of the source
+    # receives only the items whose exact type matches its
+    # ``Agent.input_type``. Validation at construction (``AgentGroup``)
+    # guarantees an unambiguous routing table — every union member maps
+    # to exactly one downstream and vice versa — so the per-downstream
+    # filter just slices the list.
+    if (
+        edge.mapper is None
+        and not isinstance(typed_outputs, list)
+        and node.input_type is not None
+    ):
+        fan_out = get_fan_out_field(upstream.output_type)
+        if fan_out is not None and len(fan_out[1]) > 1:
+            field_name, _item_types = fan_out
+            items = getattr(typed_outputs, field_name)
+            matched = [item for item in items if type(item) is node.input_type]
+            tasks = [TaskSpec(input=_to_input_string(item)) for item in matched]
+            return await runtime.gather(
+                node, tasks, max_concurrency=edge.max_concurrency
+            )
+
     downstream_input = _resolve_downstream_input(
         edge=edge,
         upstream=upstream,
@@ -390,13 +413,18 @@ async def _dispatch_multi_input(
         raise AllAgentsFailedError(
             f"every upstream of {node.name!r} failed; aggregator not called"
         )
-    if len(fan_out_keys) > 1:
-        raise TopologyError(
-            f"node {node.name!r} aggregates two fan-out upstreams "
-            f"({fan_out_keys!r}); supply an explicit aggregator mapper "
-            "rather than a cross-product"
-        )
     if aggregator is None:
+        # Two distinct failure modes — both end up here without a mapper.
+        # Heterogeneous fan-out routes a single source's items into N
+        # parallel handler lists that converge on one synthesiser; the
+        # aggregator is the user's explicit acknowledgement that they
+        # know how to combine N lists. Without one we can't guess.
+        if len(fan_out_keys) > 1:
+            raise TopologyError(
+                f"node {node.name!r} aggregates two fan-out upstreams "
+                f"({fan_out_keys!r}); supply an explicit aggregator mapper "
+                "rather than a cross-product"
+            )
         raise TopologyError(
             f"node {node.name!r} has multiple incoming edges but none of "
             "them carries an aggregating mapper; attach a mapper to one of "
