@@ -207,6 +207,9 @@ specialist = swarm.agent(
 
 The template also constrains LLM-driven dynamic spawning via the
 [`spawn_agents` tool](#llm-driven-fan-out-with-spawn_agents) — see below.
+For declarative multi-agent coordination (typed pipelines, named
+delegates, decision matrix across the three primitives), see
+[Coordination](coordination.md).
 
 ## LLM-driven fan-out with `spawn_agents`
 

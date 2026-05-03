@@ -140,6 +140,7 @@ nav:
       - Backends: concepts/backends.md
       - Agents: concepts/agents.md
       - Tools: concepts/tools.md
+      - Coordination: concepts/coordination.md
       - Events & observability: concepts/events.md
       - Cost tracking: concepts/cost.md
       - MCP: concepts/mcp.md
