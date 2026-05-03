@@ -7,7 +7,10 @@ the stored JSON dict is rehydrated as a generic ``extra="allow"`` model
 so callers can keep using ``output.model_dump()`` without the store
 knowing about the user's output_type class path.
 
-Only :class:`AgentResult` is serialised here. Value types
+Both :class:`AgentResult` (single) and :class:`GroupResult` (multi-leaf)
+round-trip here. The encoded blob carries a ``"kind"`` discriminator —
+``"agent"`` for single-leaf, ``"group"`` for multi-leaf — so the decoder
+returns the right shape without the caller specifying it. Value types
 (:class:`RunStatus`, :class:`RunProgress`, :class:`RunEvent`) already
 have ``model_dump_json`` round-trips via Pydantic.
 """
@@ -19,7 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from murmur.types import AgentResult, ResultMetadata
+from murmur.types import AgentResult, GroupResult, ResultMetadata
 
 
 class _RehydratedOutput(BaseModel):
@@ -32,21 +35,18 @@ class _RehydratedOutput(BaseModel):
     model_config = ConfigDict(extra="allow", frozen=True)
 
 
-def encode_result(result: AgentResult[BaseModel]) -> str:
-    """Serialise an :class:`AgentResult` to a JSON string."""
-    payload: dict[str, Any] = {
+def _encode_agent_result(result: AgentResult[BaseModel]) -> dict[str, Any]:
+    return {
+        "kind": "agent",
         "agent_name": result.agent_name,
         "task_id": result.task_id,
         "metadata": result.metadata.model_dump(),
         "output": result.output.model_dump() if result.output is not None else None,
         "error": str(result.error) if result.error is not None else None,
     }
-    return json.dumps(payload)
 
 
-def decode_result(blob: str) -> AgentResult[BaseModel]:
-    """Inverse of :func:`encode_result` — produces a typed-shape envelope."""
-    payload = json.loads(blob)
+def _decode_agent_result(payload: dict[str, Any]) -> AgentResult[BaseModel]:
     output_dict: dict[str, Any] | None = payload.get("output")
     output = (
         _RehydratedOutput.model_validate(output_dict)
@@ -63,6 +63,40 @@ def decode_result(blob: str) -> AgentResult[BaseModel]:
         agent_name=payload["agent_name"],
         task_id=payload["task_id"],
     )
+
+
+def encode_result(result: AgentResult[BaseModel] | GroupResult) -> str:
+    """Serialise an :class:`AgentResult` or :class:`GroupResult` to JSON."""
+    if isinstance(result, GroupResult):
+        encoded_outputs = {
+            name: _encode_agent_result(leaf) for name, leaf in result.outputs.items()
+        }
+        payload: dict[str, Any] = {
+            "kind": "group",
+            "outputs": encoded_outputs,
+            "metadata": result.metadata.model_dump(),
+        }
+        return json.dumps(payload)
+    return json.dumps(_encode_agent_result(result))
+
+
+def decode_result(blob: str) -> AgentResult[BaseModel] | GroupResult:
+    """Inverse of :func:`encode_result` — discriminates on the ``"kind"`` field.
+
+    Blobs encoded by older versions (no ``"kind"`` field) are treated as
+    ``"agent"`` shape — backward compatible with stores that pre-date
+    ``GroupResult`` support.
+    """
+    payload = json.loads(blob)
+    kind = payload.get("kind", "agent")
+    if kind == "group":
+        outputs = {
+            name: _decode_agent_result(leaf)
+            for name, leaf in payload["outputs"].items()
+        }
+        metadata = ResultMetadata.model_validate(payload.get("metadata") or {})
+        return GroupResult(outputs=outputs, metadata=metadata)
+    return _decode_agent_result(payload)
 
 
 __all__ = ["decode_result", "encode_result"]

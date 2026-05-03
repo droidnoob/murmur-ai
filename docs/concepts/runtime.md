@@ -57,7 +57,7 @@ where `Timeout` sits outside `ClaimSlot` in the pipeline).
 ## `run_group` — DAG
 
 ```python
-from murmur import AgentGroup, Edge
+from murmur import AgentGroup, Edge, GroupResult
 
 crew = AgentGroup(
     name="research-crew",
@@ -75,6 +75,32 @@ the same `runtime.run` and `runtime.gather` for each node. There is no
 separate code path. Conditional edges (`Edge(condition=lambda out: ...)`)
 and multi-input aggregation are supported. Cycles are rejected at
 group-construction time.
+
+`run_group` returns one of two shapes depending on how many terminal
+nodes actually fire at runtime — the topology *is* the intent:
+
+- **Single-terminal** (typical pipeline, branch routing where one
+  predicate fires) → returns `AgentResult` directly. Backward
+  compatible.
+- **Multi-terminal** (moderator-and-specialists, parallel branches
+  whose conditions both fire) → returns
+  [`GroupResult`](../api/agent.md#groupresult) keyed by
+  `Agent.name` with aggregate metadata.
+
+```python
+result = await runtime.run_group(crew, TaskSpec(input="..."))
+if isinstance(result, GroupResult):
+    for leaf_name, leaf in result.outputs.items():
+        ...
+else:
+    print(result.output)
+```
+
+Heterogeneous fan-out — `FanOut[list[T1 | T2 | ...]]` on a source's
+output — routes each item to the downstream whose `Agent.input_type`
+matches via `isinstance`. The validator at construction rejects
+ambiguous unions (subclass relationships), missing handlers for union
+members, and conditional edges from heterogeneous sources.
 
 ## `RuntimeOptions`
 

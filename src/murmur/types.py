@@ -8,12 +8,13 @@ thread / process / broker boundaries safely. Mutate via ``model_copy(update=...)
 
 from __future__ import annotations
 
+import types as _types
 import uuid
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Annotated, Generic, TypeVar
+from typing import Annotated, Generic, Self, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 T = TypeVar("T", bound=BaseModel)
 F = TypeVar("F")
@@ -173,13 +174,32 @@ class GroupResult(BaseModel):
     """Per-leaf results keyed by ``Agent.name``. A leaf that was
     skipped at runtime (branch routing condition, heterogeneous
     fan-out filter empty) is absent from this mapping — present
-    keys correspond to terminals that actually fired."""
+    keys correspond to terminals that actually fired.
+
+    Coerced to a read-only :class:`types.MappingProxyType` view at
+    construction so the Mapping declaration matches the runtime
+    immutability contract — without this, Pydantic stores a plain
+    ``dict`` and ``result.outputs[name] = ...`` would silently
+    succeed despite ``model_config(frozen=True)``."""
 
     metadata: ResultMetadata = Field(default_factory=ResultMetadata)
     """Aggregate diagnostics across every fired leaf. ``tokens_used``
     sums; ``duration_ms`` takes the max (parallel tiers don't add
     durations); ``cost_usd`` sums; ``backend`` is the literal
     string ``"group"``; ``trace_id`` mirrors the task's request_id."""
+
+    @model_validator(mode="after")
+    def _freeze_outputs(self) -> Self:
+        """Wrap ``outputs`` in :class:`types.MappingProxyType` so the
+        runtime contract that ``GroupResult`` is fully immutable
+        actually holds — Pydantic's ``frozen=True`` only protects the
+        attribute itself, not the contained dict.
+        """
+        if not isinstance(self.outputs, _types.MappingProxyType):
+            object.__setattr__(
+                self, "outputs", _types.MappingProxyType(dict(self.outputs))
+            )
+        return self
 
     @property
     def terminal(self) -> AgentResult[BaseModel]:

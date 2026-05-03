@@ -44,6 +44,13 @@ from murmur import (
       heading_level: 3
       show_bases: false
 
+## `GroupResult`
+
+::: murmur.GroupResult
+    options:
+      heading_level: 3
+      show_bases: false
+
 ## `AgentHandle`
 
 ::: murmur.AgentHandle

@@ -32,7 +32,7 @@ from murmur.runs._serde import decode_result, encode_result
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from murmur.types import AgentResult
+    from murmur.types import AgentResult, GroupResult
 
 
 _TERMINAL_STATES: frozenset[RunState] = frozenset(
@@ -180,7 +180,9 @@ class SQLiteRunStore:
         )
         return RunStatus(run_id=run_id, state=RunState(state_value), progress=progress)
 
-    async def get_result(self, run_id: str) -> AgentResult[BaseModel] | None:
+    async def get_result(
+        self, run_id: str
+    ) -> AgentResult[BaseModel] | GroupResult | None:
         db = await self._ensure_db()
         async with db.execute(
             "SELECT result_json FROM runs WHERE run_id=?", (run_id,)
@@ -221,7 +223,9 @@ class SQLiteRunStore:
         if state in _TERMINAL_STATES:
             self._wake_listeners(run_id)
 
-    async def set_result(self, run_id: str, result: AgentResult[BaseModel]) -> None:
+    async def set_result(
+        self, run_id: str, result: AgentResult[BaseModel] | GroupResult
+    ) -> None:
         db = await self._ensure_db()
         cursor = await db.execute(
             "UPDATE runs SET result_json=? WHERE run_id=?",

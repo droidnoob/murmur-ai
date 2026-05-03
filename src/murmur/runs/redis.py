@@ -35,7 +35,7 @@ from murmur.runs._serde import decode_result, encode_result
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from murmur.types import AgentResult
+    from murmur.types import AgentResult, GroupResult
 
 
 _TERMINAL_STATES: frozenset[RunState] = frozenset(
@@ -180,7 +180,9 @@ class RedisRunStore:
             progress=progress,
         )
 
-    async def get_result(self, run_id: str) -> AgentResult[BaseModel] | None:
+    async def get_result(
+        self, run_id: str
+    ) -> AgentResult[BaseModel] | GroupResult | None:
         key = self._run_key(run_id)
         if not await _aw(self._client.exists(key)):
             raise RegistryError(f"run_id {run_id!r} not found")
@@ -221,7 +223,9 @@ class RedisRunStore:
         if state in _TERMINAL_STATES:
             await self._expire_terminal(run_id)
 
-    async def set_result(self, run_id: str, result: AgentResult[BaseModel]) -> None:
+    async def set_result(
+        self, run_id: str, result: AgentResult[BaseModel] | GroupResult
+    ) -> None:
         key = self._run_key(run_id)
         if not await _aw(self._client.exists(key)):
             raise RegistryError(f"run_id {run_id!r} not found")

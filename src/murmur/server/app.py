@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from murmur.core.errors import AllAgentsFailedError, RegistryError
+from murmur.core.errors import RegistryError
 from murmur.runs import (
     InMemoryRunStore,
     RunEvent,
@@ -536,39 +536,17 @@ class AgentServer:
             RunEvent(type=RunEventType.AGENT_STARTED, run_id=run_id, agent=target),
         )
         try:
+            result: AgentResult[BaseModel] | GroupResult
             if is_group:
                 group = self._require_group(target)
-                group_result = await self._runtime.run_group(group, task)
-                # Multi-terminal GroupResult collapses into a synthetic
-                # AgentResult for the run-store + state machine — the store
-                # tracks one result per run; multi-leaf details ship to the
-                # client through ``_serialize_result``. The synthetic result
-                # mirrors the group's aggregate metadata; success means
-                # every fired leaf succeeded.
-                if isinstance(group_result, GroupResult):
-                    succeeded = all(
-                        leaf.is_ok() for leaf in group_result.outputs.values()
-                    )
-                    result: AgentResult[BaseModel] = AgentResult[BaseModel](
-                        output=None,
-                        error=None
-                        if succeeded
-                        else AllAgentsFailedError(
-                            f"GroupResult for {target!r} contains failed leaf(s)"
-                        ),
-                        metadata=group_result.metadata,
-                        agent_name=target,
-                        task_id=task.id,
-                    )
-                else:
-                    result = group_result
+                result = await self._runtime.run_group(group, task)
             else:
                 agent = self._require_agent(target)
                 result = await self._runtime.run(agent, task)
             await self._run_store.set_result(run_id, result)
             await self._run_store.set_state(
                 run_id,
-                RunState.COMPLETED if result.is_ok() else RunState.FAILED,
+                RunState.COMPLETED if _result_is_ok(result) else RunState.FAILED,
             )
             await self._run_store.push_event(
                 run_id,
@@ -634,6 +612,9 @@ def _serialize_result(
 
     Errors are stringified. Multi-leaf :class:`GroupResult` serialises as
     ``{"group": True, "outputs": {leaf_name: serialized, ...}, "metadata": ...}``.
+    The ``"success"`` field is uniformly defined for both shapes —
+    ``AgentResult.is_ok()`` for single, every leaf ``is_ok()`` for groups —
+    so clients can treat the two shapes uniformly via that key.
     """
     if isinstance(result, GroupResult):
         return {
@@ -652,6 +633,21 @@ def _serialize_result(
         "error": str(result.error) if result.error is not None else None,
         "metadata": result.metadata.model_dump(),
     }
+
+
+def _result_is_ok(result: AgentResult[BaseModel] | GroupResult) -> bool:
+    """Uniform success check across :class:`AgentResult` and :class:`GroupResult`.
+
+    Mirrors ``_serialize_result``'s ``"success"`` key so the run-store
+    state machine and the API response stay aligned: a multi-leaf run is
+    "ok" iff every fired leaf is ``is_ok()``. Partial-success cases (some
+    leaves succeed, others fail) settle as ``RunState.FAILED`` so the
+    state machine doesn't lie about completeness — per-leaf detail is
+    still visible through the serialized ``outputs`` payload.
+    """
+    if isinstance(result, GroupResult):
+        return all(leaf.is_ok() for leaf in result.outputs.values())
+    return result.is_ok()
 
 
 def _with_request_id(

@@ -126,11 +126,15 @@ class RunStoreContract:
     async def test_set_result_get_result_round_trip(
         self, store: RunStore, run_id: str
     ) -> None:
+        from murmur.types import AgentResult
+
         await store.create(run_id, target="x")
         result = _ok_result("x", run_id)
         await store.set_result(run_id, result)
         round_trip = await store.get_result(run_id)
         assert round_trip is not None
+        # Single-leaf store fixture — narrow the union to AgentResult.
+        assert isinstance(round_trip, AgentResult)
         assert round_trip.is_ok()
         assert round_trip.agent_name == "x"
 

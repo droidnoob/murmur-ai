@@ -1655,6 +1655,29 @@ async def test_group_result_terminal_property_works_for_single_leaf() -> None:
         _ = two.terminal
 
 
+async def test_group_result_outputs_is_immutable_after_construction() -> None:
+    """``GroupResult.outputs`` is a read-only mapping. Item assignment
+    raises ``TypeError`` even though the input was a plain dict.
+    """
+    from murmur import AgentResult, GroupResult, ResultMetadata
+
+    leaf = AgentResult[BaseModel](
+        output=None,
+        error=ValueError("x"),
+        metadata=ResultMetadata(backend="test"),
+        agent_name="solo",
+        task_id="t1",
+    )
+    g = GroupResult(outputs={"solo": leaf})
+    # The runtime check guards against mutation even though the static
+    # type already forbids it — silence the type-checker on the test
+    # body so the runtime contract gets a real assertion.
+    with pytest.raises(TypeError, match="does not support item assignment"):
+        g.outputs["new"] = leaf  # ty: ignore[invalid-assignment]
+    with pytest.raises(TypeError, match="does not support item deletion"):
+        del g.outputs["solo"]  # ty: ignore[not-subscriptable]
+
+
 async def test_group_result_aggregates_metadata_correctly(
     head_agent: Agent,
     minion_agent: Agent,

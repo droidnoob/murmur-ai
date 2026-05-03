@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from murmur.runs.redis import RedisRunStore as RedisRunStore
     from murmur.runs.rocksdb import RocksDBRunStore as RocksDBRunStore
     from murmur.runs.sqlite import SQLiteRunStore as SQLiteRunStore
-    from murmur.types import AgentResult
+    from murmur.types import AgentResult, GroupResult
 
 
 # ---------------------------------------------------------------------------
@@ -150,13 +150,17 @@ class RunStore(Protocol):
 
     async def get_status(self, run_id: str) -> RunStatus: ...
 
-    async def get_result(self, run_id: str) -> AgentResult[BaseModel] | None: ...
+    async def get_result(
+        self, run_id: str
+    ) -> AgentResult[BaseModel] | GroupResult | None: ...
 
     async def update_progress(self, run_id: str, progress: RunProgress) -> None: ...
 
     async def set_state(self, run_id: str, state: RunState) -> None: ...
 
-    async def set_result(self, run_id: str, result: AgentResult[BaseModel]) -> None: ...
+    async def set_result(
+        self, run_id: str, result: AgentResult[BaseModel] | GroupResult
+    ) -> None: ...
 
     async def push_event(self, run_id: str, event: RunEvent) -> None: ...
 
@@ -185,7 +189,7 @@ class _RunRecord:
         self.target = target
         self.state: RunState = RunState.PENDING
         self.progress: RunProgress | None = None
-        self.result: AgentResult[BaseModel] | None = None
+        self.result: AgentResult[BaseModel] | GroupResult | None = None
         self.events: list[RunEvent] = []
         self.lock = asyncio.Lock()
         self._listeners: list[asyncio.Queue[RunEvent | None]] = []
@@ -227,7 +231,9 @@ class InMemoryRunStore:
         rec = self._require(run_id)
         return RunStatus(run_id=run_id, state=rec.state, progress=rec.progress)
 
-    async def get_result(self, run_id: str) -> AgentResult[BaseModel] | None:
+    async def get_result(
+        self, run_id: str
+    ) -> AgentResult[BaseModel] | GroupResult | None:
         return self._require(run_id).result
 
     async def update_progress(self, run_id: str, progress: RunProgress) -> None:
@@ -239,7 +245,9 @@ class InMemoryRunStore:
         if state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
             rec.close_listeners()
 
-    async def set_result(self, run_id: str, result: AgentResult[BaseModel]) -> None:
+    async def set_result(
+        self, run_id: str, result: AgentResult[BaseModel] | GroupResult
+    ) -> None:
         rec = self._require(run_id)
         rec.result = result
 

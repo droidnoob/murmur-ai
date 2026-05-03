@@ -54,7 +54,7 @@ from murmur.runs import (
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from murmur.types import AgentResult
+    from murmur.types import AgentResult, GroupResult
 
 
 _TERMINAL_STATES: frozenset[RunState] = frozenset(
@@ -223,7 +223,9 @@ class RocksDBRunStore:
             progress=progress,
         )
 
-    async def get_result(self, run_id: str) -> AgentResult[BaseModel] | None:
+    async def get_result(
+        self, run_id: str
+    ) -> AgentResult[BaseModel] | GroupResult | None:
         from murmur.runs._serde import decode_result
 
         db = await self._ensure_db()
@@ -255,7 +257,9 @@ class RocksDBRunStore:
         if state in _TERMINAL_STATES:
             self._wake_listeners(run_id)
 
-    async def set_result(self, run_id: str, result: AgentResult[BaseModel]) -> None:
+    async def set_result(
+        self, run_id: str, result: AgentResult[BaseModel] | GroupResult
+    ) -> None:
         from murmur.runs._serde import encode_result
 
         db = await self._ensure_db()
