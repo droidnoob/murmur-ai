@@ -8,7 +8,6 @@ thread / process / broker boundaries safely. Mutate via ``model_copy(update=...)
 
 from __future__ import annotations
 
-import types as _types
 import uuid
 from collections.abc import Mapping
 from enum import StrEnum
@@ -176,11 +175,14 @@ class GroupResult(BaseModel):
     fan-out filter empty) is absent from this mapping — present
     keys correspond to terminals that actually fired.
 
-    Coerced to a read-only :class:`types.MappingProxyType` view at
-    construction so the Mapping declaration matches the runtime
-    immutability contract — without this, Pydantic stores a plain
-    ``dict`` and ``result.outputs[name] = ...`` would silently
-    succeed despite ``model_config(frozen=True)``."""
+    Insulated from caller mutation by an input-copy in the
+    after-validator: the dict the model stores is independent of
+    whatever the constructor was handed. Pydantic's
+    ``model_config(frozen=True)`` blocks whole-attribute reassignment
+    (``result.outputs = ...``); reaching through the stored dict
+    reference (``result.outputs["new"] = ...``) is technically
+    possible but undefined behaviour — treat ``GroupResult`` as
+    read-only after construction."""
 
     metadata: ResultMetadata = Field(default_factory=ResultMetadata)
     """Aggregate diagnostics across every fired leaf. ``tokens_used``
@@ -189,16 +191,21 @@ class GroupResult(BaseModel):
     string ``"group"``; ``trace_id`` mirrors the task's request_id."""
 
     @model_validator(mode="after")
-    def _freeze_outputs(self) -> Self:
-        """Wrap ``outputs`` in :class:`types.MappingProxyType` so the
-        runtime contract that ``GroupResult`` is fully immutable
-        actually holds — Pydantic's ``frozen=True`` only protects the
-        attribute itself, not the contained dict.
+    def _isolate_outputs(self) -> Self:
+        """Copy the input mapping into a fresh dict so external
+        mutation of the caller's dict can't bleed into this model.
+
+        Earlier iterations wrapped ``outputs`` in
+        :class:`types.MappingProxyType` for hard read-only
+        enforcement; that broke ``model_copy(deep=True)`` and
+        ``copy.deepcopy`` because ``mappingproxy`` isn't picklable
+        (``TypeError: cannot pickle 'mappingproxy' object``). The
+        plain-dict copy keeps standard Pydantic serialization /
+        deep-copy semantics intact while still insulating the model
+        from external aliasing.
         """
-        if not isinstance(self.outputs, _types.MappingProxyType):
-            object.__setattr__(
-                self, "outputs", _types.MappingProxyType(dict(self.outputs))
-            )
+        if not isinstance(self.outputs, dict):
+            object.__setattr__(self, "outputs", dict(self.outputs))
         return self
 
     @property

@@ -90,6 +90,26 @@ class AsyncBackend:
         )
         self._tasks: dict[str, asyncio.Task[AgentResult[BaseModel]]] = {}
         self._killed: set[str] = set()
+        # Latch the construction-time identity invariant — see
+        # ``__setattr__`` below for the rejection path.
+        self.__dict__["_init_complete"] = True
+
+    # Names whose values must not change after ``__init__`` completes —
+    # rebinding any of them would let a caller bypass the registry /
+    # executor identity check enforced in ``__init__``.
+    _LOCKED_AFTER_INIT: frozenset[str] = frozenset({"_tool_registry", "_tool_executor"})
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if (
+            self.__dict__.get("_init_complete")
+            and name in AsyncBackend._LOCKED_AFTER_INIT
+        ):
+            raise AttributeError(
+                f"AsyncBackend.{name} is immutable after construction; "
+                f"swapping it would bypass the registry/executor identity "
+                f"invariant established in __init__"
+            )
+        super().__setattr__(name, value)
 
     @property
     def tool_registry(self) -> ToolRegistry:

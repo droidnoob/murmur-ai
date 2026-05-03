@@ -301,6 +301,28 @@ class AgentRuntime:
         # children can race on the same runtime instance.
         self._spawn_count: int = 0
         self._spawn_count_lock: asyncio.Lock | None = None
+        # Latch the construction-time identity invariant — with this set
+        # later, ``__setattr__`` rejects attempts to swap the tool
+        # registry / executor and re-introduce the divergence the
+        # constructor guard was designed to prevent.
+        self.__dict__["_init_complete"] = True
+
+    # Names whose values must not change after ``__init__`` completes —
+    # rebinding any of them would let a caller bypass the constructor's
+    # registry/executor identity check.
+    _LOCKED_AFTER_INIT: frozenset[str] = frozenset({"_tool_registry", "_tool_executor"})
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if (
+            self.__dict__.get("_init_complete")
+            and name in AgentRuntime._LOCKED_AFTER_INIT
+        ):
+            raise AttributeError(
+                f"AgentRuntime.{name} is immutable after construction; "
+                f"swapping it would bypass the registry/executor identity "
+                f"invariant established in __init__"
+            )
+        super().__setattr__(name, value)
 
     @property
     def event_emitter(self) -> EventEmitter:

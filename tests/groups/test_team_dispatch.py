@@ -406,20 +406,57 @@ async def test_run_group_rejects_non_group_non_team_input() -> None:
         await runtime.shutdown()
 
 
-async def test_agent_team_delegates_is_immutable_after_construction() -> None:
-    """``AgentTeam.delegates`` is wrapped in ``MappingProxyType`` at
-    construction so callers can't mutate the mapping post-hoc and
-    bypass the validators.
+async def test_agent_team_delegates_isolated_from_caller_dict() -> None:
+    """``AgentTeam.delegates`` stores an independent copy of the
+    caller's dict so external mutation can't bleed into the model.
+    Whole-attribute reassignment is blocked by Pydantic's
+    ``frozen=True``; mutation through the stored dict reference is
+    documented as undefined behaviour.
     """
     coordinator = _agent("triage")
     billing = _agent("billing-agent", input_type=_BillingInput)
+    src = {"billing": billing}
     team = AgentTeam(
         name="t-frozen",
         coordinator=coordinator,
-        delegates={"billing": billing},
+        delegates=src,
         output_type=_Resolution,
     )
-    with pytest.raises(TypeError, match="does not support item assignment"):
-        team.delegates["new"] = billing  # ty: ignore[invalid-assignment]
-    with pytest.raises(TypeError, match="does not support item deletion"):
-        del team.delegates["billing"]  # ty: ignore[not-subscriptable]
+    technical = _agent("technical-agent", input_type=_TechnicalInput)
+    # Mutating the original dict doesn't change the model.
+    src["technical"] = technical
+    assert "technical" not in team.delegates
+    # Whole-attribute reassignment blocked by frozen=True.
+    with pytest.raises(Exception, match="(frozen|mutation)"):
+        team.delegates = {}
+
+
+async def test_agent_runtime_blocks_post_construction_executor_swap() -> None:
+    """The constructor-time registry/executor identity invariant must
+    not be bypassable by reaching into private attributes after
+    ``__init__``. ``__setattr__`` rejects swaps of ``_tool_registry``
+    and ``_tool_executor`` post-construction.
+    """
+    from murmur.tools.executor import ToolExecutor
+    from murmur.tools.registry import ToolRegistry
+
+    runtime = AgentRuntime()
+    try:
+        with pytest.raises(AttributeError, match="immutable after construction"):
+            runtime._tool_executor = ToolExecutor(ToolRegistry())
+        with pytest.raises(AttributeError, match="immutable after construction"):
+            runtime._tool_registry = ToolRegistry()
+    finally:
+        await runtime.shutdown()
+
+
+async def test_async_backend_blocks_post_construction_executor_swap() -> None:
+    """Same identity-latch on ``AsyncBackend``."""
+    from murmur.tools.executor import ToolExecutor
+    from murmur.tools.registry import ToolRegistry
+
+    backend = AsyncBackend()
+    with pytest.raises(AttributeError, match="immutable after construction"):
+        backend._tool_executor = ToolExecutor(ToolRegistry())
+    with pytest.raises(AttributeError, match="immutable after construction"):
+        backend._tool_registry = ToolRegistry()

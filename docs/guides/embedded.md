@@ -64,7 +64,7 @@ a separate one-liner because it modifies the host app, not the router.
 | `GET` | `/agents` | – | List of registered agent names |
 | `GET` | `/agents/{name}/schema` | – | JSON schema for the agent's input/output |
 | `POST` | `/agents/{name}/run` | `TaskSpec` JSON | `AgentResult` JSON |
-| `POST` | `/agents/{name}/gather` | `list[TaskSpec]` JSON | `list[AgentResult]` JSON |
+| `POST` | `/agents/{name}/gather` | `{tasks: [TaskSpec, ...], max_concurrency: int}` | `list[AgentResult]` JSON |
 | `GET` | `/groups` | – | List of registered group names |
 | `GET` | `/groups/{name}/topology` | – | Group topology metadata |
 | `POST` | `/groups/{name}/run` | `TaskSpec` JSON | `AgentResult` or `GroupResult` JSON (see below) |

@@ -1655,9 +1655,12 @@ async def test_group_result_terminal_property_works_for_single_leaf() -> None:
         _ = two.terminal
 
 
-async def test_group_result_outputs_is_immutable_after_construction() -> None:
-    """``GroupResult.outputs`` is a read-only mapping. Item assignment
-    raises ``TypeError`` even though the input was a plain dict.
+async def test_group_result_outputs_isolated_from_caller_dict() -> None:
+    """``GroupResult.outputs`` stores an independent copy of the
+    caller's dict — mutating the input mapping after construction
+    can't bleed into the model. Whole-attribute reassignment is
+    blocked by Pydantic's ``frozen=True``; in-place mutation through
+    the stored dict reference is documented as undefined behaviour.
     """
     from murmur import AgentResult, GroupResult, ResultMetadata
 
@@ -1668,14 +1671,14 @@ async def test_group_result_outputs_is_immutable_after_construction() -> None:
         agent_name="solo",
         task_id="t1",
     )
-    g = GroupResult(outputs={"solo": leaf})
-    # The runtime check guards against mutation even though the static
-    # type already forbids it — silence the type-checker on the test
-    # body so the runtime contract gets a real assertion.
-    with pytest.raises(TypeError, match="does not support item assignment"):
-        g.outputs["new"] = leaf  # ty: ignore[invalid-assignment]
-    with pytest.raises(TypeError, match="does not support item deletion"):
-        del g.outputs["solo"]  # ty: ignore[not-subscriptable]
+    src: dict[str, AgentResult[BaseModel]] = {"solo": leaf}
+    g = GroupResult(outputs=src)
+    # Mutating the original dict doesn't change the model.
+    src["unrelated"] = leaf
+    assert "unrelated" not in g.outputs
+    # Whole-attribute reassignment blocked by frozen=True.
+    with pytest.raises(Exception, match="(frozen|mutation)"):
+        g.outputs = {}
 
 
 async def test_group_result_aggregates_metadata_correctly(
