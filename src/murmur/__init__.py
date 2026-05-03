@@ -9,7 +9,7 @@ adapters in :mod:`murmur.interop`.
 """
 
 from murmur.agent import Agent
-from murmur.groups import AgentGroup, Edge
+from murmur.groups import AgentGroup, AgentTeam, Edge
 from murmur.runtime import AgentRuntime
 from murmur.templates import AgentTemplate
 from murmur.types import (
@@ -30,6 +30,7 @@ __all__ = [
     "AgentHandle",
     "AgentResult",
     "AgentRuntime",
+    "AgentTeam",
     "AgentTemplate",
     "Edge",
     "FanOut",
