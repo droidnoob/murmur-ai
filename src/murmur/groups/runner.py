@@ -99,27 +99,15 @@ async def run_group(
             continue
 
         # Tier with N>=2 sibling nodes (no inter-tier dependencies, by
-        # construction of topological_tiers). Dispatch concurrently.
-        # ``return_exceptions=False`` means the first dispatch helper to
-        # raise (TopologyError from a condition predicate, AllAgentsFailedError
-        # from a dead upstream, etc.) aborts the run_group; sibling
-        # dispatches already in flight are not cancelled but their
-        # eventual results are discarded. ``runtime.run`` itself never
-        # raises — failures land in ``AgentResult.error`` — so this only
-        # fires for the structural errors above.
-        tier_outputs = await asyncio.gather(
-            *(
-                _resolve_node(
-                    node=node,
-                    runtime=runtime,
-                    task=task,
-                    incoming=incoming,
-                    results=results,
-                    skipped=skipped,
-                )
-                for node in tier
-            ),
-            return_exceptions=False,
+        # construction of topological_tiers). Dispatch concurrently with
+        # fail-fast cancellation — see ``_dispatch_tier_parallel``.
+        tier_outputs = await _dispatch_tier_parallel(
+            tier=tier,
+            runtime=runtime,
+            task=task,
+            incoming=incoming,
+            results=results,
+            skipped=skipped,
         )
         for node, dispatched in zip(tier, tier_outputs, strict=True):
             if isinstance(dispatched, _Skipped):
@@ -162,6 +150,68 @@ class _Skipped:
 
 
 _SKIPPED = _Skipped()
+
+
+# ---------------------------------------------------------------------------
+# Tier-parallel dispatch
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_tier_parallel(
+    *,
+    tier: tuple[Agent, ...],
+    runtime: AgentRuntime,
+    task: TaskSpec,
+    incoming: dict[Agent, list[tuple[Agent, Edge]]],
+    results: dict[Agent, _NodeOutput],
+    skipped: set[Agent],
+) -> list[_NodeOutput | _Skipped]:
+    """Dispatch a tier of >=2 sibling nodes concurrently with fail-fast cancellation.
+
+    Each sibling becomes its own ``asyncio.Task`` so the contextvar fork
+    happens at task creation — ``_current_spawn`` propagates from the
+    runner task into each sibling without leaking back. On the first
+    sibling failure (typically :class:`TopologyError` from a condition
+    predicate or :class:`AllAgentsFailedError` from a fully-dead upstream
+    batch), pending siblings are cancelled and drained before the
+    exception propagates. That keeps in-flight siblings from continuing
+    to claim spawn slots, charge token budget, or emit completion events
+    against a run the caller has already abandoned — matching the
+    sequential walker's fail-fast resource accounting one-for-one.
+
+    The first exception is re-raised with its original type — no
+    :class:`ExceptionGroup` wrapping — so callers that ``pytest.raises``
+    on the original error keep working.
+
+    ``runtime.run`` itself never raises — its failures land in
+    ``AgentResult.error`` — so this fail-fast path only triggers on
+    structural errors raised by the dispatch helpers themselves.
+    """
+    sibling_tasks: list[asyncio.Task[_NodeOutput | _Skipped]] = [
+        asyncio.create_task(
+            _resolve_node(
+                node=node,
+                runtime=runtime,
+                task=task,
+                incoming=incoming,
+                results=results,
+                skipped=skipped,
+            ),
+            name=f"murmur-tier:{node.name}",
+        )
+        for node in tier
+    ]
+    try:
+        return await asyncio.gather(*sibling_tasks, return_exceptions=False)
+    except BaseException:
+        for sibling_task in sibling_tasks:
+            if not sibling_task.done():
+                sibling_task.cancel()
+        # Drain so cancelled siblings settle before we propagate. Errors
+        # surfaced during drain are swallowed — we already have the
+        # original failure to re-raise.
+        await asyncio.gather(*sibling_tasks, return_exceptions=True)
+        raise
 
 
 # ---------------------------------------------------------------------------

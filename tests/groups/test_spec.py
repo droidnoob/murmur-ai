@@ -172,5 +172,32 @@ def test_topological_tiers_disconnected_entries_share_tier_zero() -> None:
         },
     )
     tiers = group.topological_tiers()
-    assert set(tiers[0]) == {a, b}
-    assert set(tiers[1]) == {c, d}
+    assert tiers[0] == (a, b)
+    assert tiers[1] == (c, d)
+
+
+def test_topological_tiers_within_tier_order_independent_of_unlock_order() -> None:
+    """Tier members follow topology declaration order even when earlier
+    parents unlock them in a different sequence.
+
+    Topology declared as ``{a, b, c, d}``. Edges: ``a -> d`` and
+    ``b -> c``. Walking tier 0 ``(a, b)`` decrements ``d`` first
+    (unlocked via ``a``), then ``c`` (unlocked via ``b``) — the
+    natural unlock order is ``[d, c]``. Tier 1 must still be
+    ``(c, d)`` because that's the topology declaration order;
+    callers depend on this for stable execution-order contracts
+    even when sibling dispatch is parallel.
+    """
+    a, b, c, d = _agent("a"), _agent("b"), _agent("c"), _agent("d")
+    group = AgentGroup(
+        name="unlock-order",
+        topology={
+            a: Edge(to=(d,)),
+            b: Edge(to=(c,)),
+            c: Edge.terminal(),
+            d: Edge.terminal(),
+        },
+    )
+    tiers = group.topological_tiers()
+    assert tiers[0] == (a, b)
+    assert tiers[1] == (c, d)

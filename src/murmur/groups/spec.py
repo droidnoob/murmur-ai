@@ -167,6 +167,11 @@ class AgentGroup:
         tier so the contract is "results stored, terminal returned"
         rather than "node X ran before node Y".
         """
+        # Stable lookup for declaration order — used to sort each tier's
+        # ready set independently of the order in which earlier-tier
+        # parents happened to release their downstreams (which depends on
+        # iteration order over outgoing edges, not topology declaration).
+        order_index: dict[Agent, int] = {a: i for i, a in enumerate(self.topology)}
         indeg: dict[Agent, int] = dict.fromkeys(self.topology, 0)
         for src in self.topology:
             for edge in self.outgoing_edges(src):
@@ -186,6 +191,7 @@ class AgentGroup:
                         indeg[tgt] -= 1
                         if indeg[tgt] == 0:
                             next_ready.append(tgt)
+            next_ready.sort(key=order_index.__getitem__)
             ready = next_ready
         if seen != len(self.topology):  # pragma: no cover — caught by _has_cycle
             raise TopologyError(f"AgentGroup {self.name!r} topology has a cycle")

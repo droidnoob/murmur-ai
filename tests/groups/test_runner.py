@@ -898,7 +898,7 @@ async def test_run_group_dispatches_tier_siblings_in_parallel(
         await worker.stop()
 
 
-async def test_run_group_linear_dag_does_not_invoke_asyncio_gather(
+async def test_run_group_linear_dag_skips_tier_parallel_helper(
     monkeypatch: pytest.MonkeyPatch,
     head_agent: Agent,
     minion_agent: Agent,
@@ -906,21 +906,21 @@ async def test_run_group_linear_dag_does_not_invoke_asyncio_gather(
 ) -> None:
     """Single-agent tiers stay on the sequential fast path.
 
-    Spies on the ``asyncio.gather`` symbol the runner module imports.
-    ``runtime.gather`` (used for fan-out) lives behind the runtime; only
-    the runner's tier-parallel branch calls into the spied symbol, which
-    must never fire on a linear DAG.
+    Spies on the runner-local ``_dispatch_tier_parallel`` helper rather
+    than patching ``asyncio.gather`` globally — that way the spy can't be
+    inflated by other unrelated ``asyncio.gather`` calls from the
+    backend/broker layers during the test.
     """
     from murmur.groups import runner as runner_module
 
-    real_gather = runner_module.asyncio.gather
-    calls: list[int] = []
+    real_helper = runner_module._dispatch_tier_parallel
+    calls: list[tuple[str, ...]] = []
 
-    async def counting_gather(*aws, **kwargs):
-        calls.append(len(aws))
-        return await real_gather(*aws, **kwargs)
+    async def counting_helper(*, tier, **kwargs):
+        calls.append(tuple(node.name for node in tier))
+        return await real_helper(tier=tier, **kwargs)
 
-    monkeypatch.setattr(runner_module.asyncio, "gather", counting_gather)
+    monkeypatch.setattr(runner_module, "_dispatch_tier_parallel", counting_helper)
 
     publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
     try:
@@ -938,9 +938,63 @@ async def test_run_group_linear_dag_does_not_invoke_asyncio_gather(
         result = await publisher.run_group(crew, TaskSpec(input="..."))
         assert result.is_ok()
         assert calls == [], (
-            "linear DAG should not have invoked the runner's tier-parallel "
-            f"asyncio.gather (calls={calls})"
+            "linear DAG should not have invoked the tier-parallel helper "
+            f"(calls={calls})"
         )
+    finally:
+        await worker.stop()
+
+
+async def test_run_group_invokes_tier_parallel_helper_for_sibling_tiers(
+    monkeypatch: pytest.MonkeyPatch,
+    head_agent: Agent,
+    minion_agent: Agent,
+    auditor_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Multi-node tiers go through ``_dispatch_tier_parallel`` (positive
+    side of the previous test — proves the spy isn't a no-op)."""
+    from murmur.groups import runner as runner_module
+
+    real_helper = runner_module._dispatch_tier_parallel
+    calls: list[tuple[str, ...]] = []
+
+    async def counting_helper(*, tier, **kwargs):
+        calls.append(tuple(node.name for node in tier))
+        return await real_helper(tier=tier, **kwargs)
+
+    monkeypatch.setattr(runner_module, "_dispatch_tier_parallel", counting_helper)
+
+    factory = _multi_input_factory(
+        {
+            head_agent.name: _decomposition().model_dump(),
+            minion_agent.name: _finding().model_dump(),
+            auditor_agent.name: _finding().model_dump(),
+            summary_agent.name: _final().model_dump(),
+        }
+    )
+    publisher, worker = await _wire_multi(
+        head_agent, minion_agent, auditor_agent, summary_agent, factory=factory
+    )
+    try:
+        crew = AgentGroup(
+            name="invokes-helper",
+            topology={
+                head_agent: (
+                    Edge(to=(minion_agent,), mapper=lambda _: TaskSpec(input="m")),
+                    Edge(to=(auditor_agent,), mapper=lambda _: TaskSpec(input="a")),
+                ),
+                minion_agent: Edge(
+                    to=(summary_agent,), mapper=lambda _: TaskSpec(input="agg")
+                ),
+                auditor_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        # Exactly one tier had >=2 siblings: [minion, auditor].
+        assert calls == [(minion_agent.name, auditor_agent.name)]
     finally:
         await worker.stop()
 
@@ -1083,4 +1137,74 @@ async def test_run_group_dispatcher_failure_aborts_run(
         with pytest.raises(TopologyError, match="research-head.*auditor"):
             await publisher.run_group(crew, TaskSpec(input="..."))
     finally:
+        await worker.stop()
+
+
+async def test_run_group_cancels_inflight_sibling_on_failfast(
+    head_agent: Agent,
+    minion_agent: Agent,
+    auditor_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """When one sibling fails, an in-flight sibling waiting on the broker
+    must be cancelled — ``run_group`` returns promptly rather than waiting
+    for the slow sibling's broker round-trip to settle.
+
+    Without ``_dispatch_tier_parallel``'s cancel-on-failfast, this would
+    hang forever (the blocking sibling never gets a result, the publisher
+    never sees its ``ResultMessage``). The ``asyncio.timeout(2.0)``
+    guard makes the regression failure mode visible.
+    """
+    block_event = asyncio.Event()  # never set
+
+    async def gating_factory(
+        agent: Agent, _allowed: frozenset[str], _task_id: str
+    ) -> pydantic_ai.Agent[None, Any]:
+        if agent.name == minion_agent.name:
+            # Block the minion side forever so the only way run_group
+            # can return is if its broker await is cancelled.
+            await block_event.wait()
+        canned = {
+            head_agent.name: _decomposition().model_dump(),
+            auditor_agent.name: _finding().model_dump(),
+            summary_agent.name: _final().model_dump(),
+        }[agent.name]
+        return pydantic_ai.Agent(
+            model=TestModel(custom_output_args=canned),
+            instructions=agent.instructions,
+            output_type=agent.output_type,
+        )
+
+    publisher, worker = await _wire_multi(
+        head_agent, minion_agent, auditor_agent, summary_agent, factory=gating_factory
+    )
+
+    def boom(_out):  # noqa: ANN001
+        raise ValueError("nope")
+
+    try:
+        crew = AgentGroup(
+            name="cancel-on-failfast",
+            topology={
+                head_agent: (
+                    Edge(to=(minion_agent,), mapper=lambda _: TaskSpec(input="m")),
+                    Edge(
+                        to=(auditor_agent,),
+                        mapper=lambda _: TaskSpec(input="a"),
+                        condition=boom,
+                    ),
+                ),
+                minion_agent: Edge(
+                    to=(summary_agent,), mapper=lambda _: TaskSpec(input="agg")
+                ),
+                auditor_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        async with asyncio.timeout(2.0):
+            with pytest.raises(TopologyError, match="research-head.*auditor"):
+                await publisher.run_group(crew, TaskSpec(input="..."))
+    finally:
+        # Release the gate so any orphaned worker-side coroutine settles.
+        block_event.set()
         await worker.stop()
