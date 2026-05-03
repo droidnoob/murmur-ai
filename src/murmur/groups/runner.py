@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from murmur.core.errors import AllAgentsFailedError, TopologyError
+from murmur.core.errors import AllAgentsFailedError, SpecValidationError, TopologyError
 from murmur.groups._introspection import get_fan_out_field
 from murmur.types import AgentResult, TaskSpec
 
@@ -308,11 +308,12 @@ async def _dispatch_single_input(
 
     # Heterogeneous fan-out: when the upstream's output_type carries a
     # ``FanOut[list[T1 | T2 | ...]]`` field, each downstream of the source
-    # receives only the items whose exact type matches its
-    # ``Agent.input_type``. Validation at construction (``AgentGroup``)
-    # guarantees an unambiguous routing table — every union member maps
-    # to exactly one downstream and vice versa — so the per-downstream
-    # filter just slices the list.
+    # receives only the items whose declared ``Agent.input_type`` matches
+    # via :func:`isinstance`. Routing uses ``isinstance`` rather than an
+    # exact-type identity check so concrete Pydantic subclasses (e.g.
+    # discriminated-union variants) route correctly; the construction-time
+    # validator rejects subclass relationships *between* union members so
+    # this lookup is unambiguous.
     if (
         edge.mapper is None
         and not isinstance(typed_outputs, list)
@@ -320,9 +321,22 @@ async def _dispatch_single_input(
     ):
         fan_out = get_fan_out_field(upstream.output_type)
         if fan_out is not None and len(fan_out[1]) > 1:
-            field_name, _item_types = fan_out
+            field_name, item_types = fan_out
             items = getattr(typed_outputs, field_name)
-            matched = [item for item in items if type(item) is node.input_type]
+            # Pre-validate: every item must be an instance of some union
+            # member. An instance of an unrelated type means the user's
+            # data model has drifted from the declared union — surface
+            # that as a loud error rather than silently dropping the item
+            # (which is what the per-handler filter would otherwise do).
+            for item in items:
+                if not any(isinstance(item, t) for t in item_types):
+                    raise SpecValidationError(
+                        f"fan-out source {upstream.name!r} produced item of "
+                        f"type {type(item).__name__!r}; expected an instance "
+                        f"of one of "
+                        f"{[t.__name__ for t in item_types]}"
+                    )
+            matched = [item for item in items if isinstance(item, node.input_type)]
             tasks = [TaskSpec(input=_to_input_string(item)) for item in matched]
             return await runtime.gather(
                 node, tasks, max_concurrency=edge.max_concurrency

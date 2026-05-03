@@ -1482,3 +1482,56 @@ async def test_single_type_fanout_still_works_unchanged(
         assert result.output.findings_count == N_MINIONS
     finally:
         await worker.stop()
+
+
+async def test_dispatch_single_input_raises_on_unknown_item_type(
+    hetero_source_agent: Agent,
+    question_agent: Agent,
+) -> None:
+    """Defence in depth: if a heterogeneous source's stored output
+    contains an item whose type isn't in the declared union,
+    ``_dispatch_single_input`` raises ``SpecValidationError`` rather
+    than silently dropping it through every handler's ``isinstance``
+    filter.
+
+    Constructed via ``model_construct`` to bypass Pydantic's normal
+    union validation — simulates the corner case where validation is
+    skipped (custom validators, ``arbitrary_types_allowed``, hand-
+    constructed instances). The runtime guard makes that a loud
+    failure rather than silent data loss.
+    """
+    from murmur.core.errors import SpecValidationError as _SpecError
+    from murmur.groups.runner import _dispatch_single_input
+    from murmur.types import AgentResult, ResultMetadata
+
+    class _Stranger(BaseModel):
+        msg: str
+
+    # Bypass Pydantic's union validation. The runner's pre-check is the
+    # only line of defence at this point.
+    smuggled = _Hetero.model_construct(
+        items=[_Question(text="ok"), _Stranger(msg="bug")]
+    )
+    upstream_result: AgentResult[BaseModel] = AgentResult(
+        output=smuggled,
+        error=None,
+        metadata=ResultMetadata(backend="test"),
+        agent_name=hetero_source_agent.name,
+        task_id="t-up",
+    )
+    edge = Edge(to=(question_agent,))
+    results: dict[Agent, Any] = {hetero_source_agent: upstream_result}
+
+    runtime = AgentRuntime()
+    try:
+        with pytest.raises(_SpecError, match="expected an instance of"):
+            await _dispatch_single_input(
+                runtime=runtime,
+                node=question_agent,
+                upstream=hetero_source_agent,
+                edge=edge,
+                results=results,
+                skipped=set(),
+            )
+    finally:
+        await runtime.shutdown()

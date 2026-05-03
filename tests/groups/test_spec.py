@@ -232,6 +232,20 @@ class _DecompSingle(BaseModel):
     items: FanOut[list[_ItemA]]
 
 
+class _Animal(BaseModel):
+    species: str
+
+
+class _Dog(_Animal):
+    breed: str = ""
+
+
+class _SubclassUnion(BaseModel):
+    """Union with a subclass relationship — should be rejected."""
+
+    items: FanOut[list[_Animal | _Dog]]
+
+
 class _Final(BaseModel):
     out: str
 
@@ -393,3 +407,46 @@ def test_heterogeneous_fanout_split_across_multiple_edges_validates() -> None:
             c: Edge.terminal(),
         },
     )
+
+
+def test_heterogeneous_fanout_subclass_in_union_raises() -> None:
+    """Two union members with a subclass relationship — isinstance
+    routing would dispatch a child instance to BOTH handlers. Reject
+    at construction.
+    """
+    src = _typed_agent("src", output_type=_SubclassUnion)
+    a = _typed_agent("animal", output_type=_Final, input_type=_Animal)
+    d = _typed_agent("dog", output_type=_Final, input_type=_Dog)
+    with pytest.raises(SpecValidationError, match="subclass relationship"):
+        AgentGroup(
+            name="hetero-subclass",
+            topology={
+                src: Edge(to=(a, d)),
+                a: Edge.terminal(),
+                d: Edge.terminal(),
+            },
+        )
+
+
+def test_heterogeneous_fanout_conditional_edge_raises() -> None:
+    """A condition predicate on a heterogeneous source's outgoing edge
+    would silently drop items routed to that downstream when the
+    condition fires False. Reject at construction.
+    """
+    src = _typed_agent("src", output_type=_DecompUnion)
+    a = _typed_agent("a", output_type=_Final, input_type=_ItemA)
+    b = _typed_agent("b", output_type=_Final, input_type=_ItemB)
+    c = _typed_agent("c", output_type=_Final, input_type=_ItemC)
+    with pytest.raises(SpecValidationError, match="conditional edges are"):
+        AgentGroup(
+            name="hetero-conditional",
+            topology={
+                src: (
+                    Edge(to=(a,)),
+                    Edge(to=(b, c), condition=lambda _: True),
+                ),
+                a: Edge.terminal(),
+                b: Edge.terminal(),
+                c: Edge.terminal(),
+            },
+        )

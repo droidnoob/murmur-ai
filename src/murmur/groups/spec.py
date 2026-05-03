@@ -227,6 +227,16 @@ class AgentGroup:
           outgoing targets — items of that type would have nowhere to go.
         - A downstream agent whose ``input_type`` doesn't match any
           union member — the agent would never receive any items.
+        - Two union members with a subclass relationship — the runner
+          uses :func:`isinstance` for routing (so concrete Pydantic
+          subclasses route correctly), which would otherwise route an
+          instance of the subclass to *both* handlers.
+        - An outgoing edge from the source that carries a
+          :attr:`Edge.condition` predicate — heterogeneous routing
+          can't reconcile "items matched this downstream by type" with
+          "the edge to that downstream is conditionally skipped";
+          items would silently drop on the False branch. Move the
+          condition to the downstream node, or use a mapper.
 
         Called eagerly at construction (``__post_init__``) so misconfigured
         topologies fail fast; called again at runtime by the runner so the
@@ -241,10 +251,33 @@ class AgentGroup:
 
         targets: list[Agent] = []
         for edge in self.outgoing_edges(source):
+            if edge.condition is not None:
+                raise SpecValidationError(
+                    f"edge from heterogeneous fan-out source {source.name!r} "
+                    f"carries a condition predicate; conditional edges are "
+                    f"not supported for heterogeneous fan-out — items routed "
+                    f"to a skipped edge would silently drop. Move the "
+                    f"condition to the downstream node, or use a mapper."
+                )
             targets.extend(edge.to)
         if not targets:
             # Terminal source — no routing to validate.
             return None
+
+        # Subclass-relationship guard: with isinstance routing, a `Dog`
+        # instance would match both `Animal` and `Dog` handlers if both
+        # were in the union. Reject at construction so the user picks
+        # one shape (concrete-only, or single base).
+        for i, t1 in enumerate(item_types):
+            for t2 in item_types[i + 1 :]:
+                if issubclass(t1, t2) or issubclass(t2, t1):
+                    raise SpecValidationError(
+                        f"fan-out source {source.name!r} union members "
+                        f"{t1.__name__!r} and {t2.__name__!r} have a "
+                        f"subclass relationship; isinstance routing would "
+                        f"be ambiguous — declare distinct sibling types "
+                        f"in the union"
+                    )
 
         table: dict[type[BaseModel], Agent] = {}
         seen: dict[type[BaseModel], str] = {}
