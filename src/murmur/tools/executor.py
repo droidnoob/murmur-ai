@@ -44,6 +44,17 @@ class ToolExecutor:
         # opting into the event API.
         self._emitter: EventEmitter = event_emitter or LogEventEmitter()
 
+    @property
+    def registry(self) -> ToolRegistry:
+        """The :class:`ToolRegistry` this executor consults at execute time.
+
+        Exposed as a public read-only attribute so callers that pass a
+        custom executor can pin runtime/backend registry identity
+        against this value — keeping the registry visible at the agent-
+        build path and at execution-time fall-through aligned.
+        """
+        return self._registry
+
     async def execute(
         self,
         *,

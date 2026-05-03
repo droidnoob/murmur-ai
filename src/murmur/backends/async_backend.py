@@ -55,7 +55,27 @@ class AsyncBackend:
         tool_executor: ToolExecutor | None = None,
         event_emitter: EventEmitter | None = None,
     ) -> None:
-        self._tool_registry: ToolRegistry = tool_registry or ToolRegistry()
+        # Registry identity rule: the registry the executor consults at
+        # execution-time fall-through MUST be the same object as the
+        # registry the agent-build path reads from. Otherwise tool
+        # registrations land on one view and execution misses them.
+        # When both are passed, validate the executor's registry matches;
+        # when only the executor is passed, derive the registry from it.
+        # When only the registry is passed (or neither), construct the
+        # executor against it.
+        if tool_executor is not None and tool_registry is not None:
+            if tool_executor.registry is not tool_registry:
+                raise ValueError(
+                    "AsyncBackend(tool_registry=..., tool_executor=...) requires "
+                    "the two to share the same registry — otherwise registrations "
+                    "on the registry are invisible at execution. Pass only one, "
+                    "or ensure tool_executor.registry is tool_registry."
+                )
+            self._tool_registry: ToolRegistry = tool_registry
+        elif tool_executor is not None:
+            self._tool_registry = tool_executor.registry
+        else:
+            self._tool_registry = tool_registry or ToolRegistry()
         # Expose the registry as a public read-only attribute so callers
         # that need to register tools where dispatch will look them up
         # (e.g. AgentTeam's per-run delegate tool) can find the right

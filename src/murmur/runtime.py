@@ -246,7 +246,24 @@ class AgentRuntime:
         from murmur.events.log import LogEventEmitter
 
         self._registry = registry
-        self._tool_registry: ToolRegistry = tool_registry or ToolRegistry()
+        # Registry identity rule: the registry the executor consults at
+        # execution-time fall-through MUST be the same object as the
+        # registry the agent-build path reads from. Otherwise tool
+        # registrations land on one view and execution misses them. Same
+        # rule as ``AsyncBackend.__init__`` — see there for rationale.
+        if tool_executor is not None and tool_registry is not None:
+            if tool_executor.registry is not tool_registry:
+                raise ValueError(
+                    "AgentRuntime(tool_registry=..., tool_executor=...) requires "
+                    "the two to share the same registry — otherwise registrations "
+                    "on the registry are invisible at execution. Pass only one, "
+                    "or ensure tool_executor.registry is tool_registry."
+                )
+            self._tool_registry: ToolRegistry = tool_registry
+        elif tool_executor is not None:
+            self._tool_registry = tool_executor.registry
+        else:
+            self._tool_registry = tool_registry or ToolRegistry()
         # Default emitter forwards every event to structlog with the same
         # event names previously used by direct ``log.ainfo`` calls — opting
         # out (e.g. ``MultiEventEmitter([])``) means no observability output.
@@ -808,8 +825,15 @@ class AgentRuntime:
         # avoid circular import at module load time.
         from murmur.events.types import EventType, RuntimeEvent
         from murmur.groups.runner import run_group as _run_group
+        from murmur.groups.spec import AgentGroup as _AgentGroup
         from murmur.groups.team import AgentTeam as _AgentTeam
         from murmur.groups.team_runner import run_team as _run_team
+
+        if not isinstance(group, _AgentGroup | _AgentTeam):
+            raise TypeError(
+                f"run_group expects AgentGroup or AgentTeam; got "
+                f"{type(group).__name__!r}"
+            )
 
         if isinstance(group, _AgentTeam):
             start = time.perf_counter()

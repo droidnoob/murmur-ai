@@ -61,12 +61,38 @@ a separate one-liner because it modifies the host app, not the router.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| `POST` | `/{agent_name}/run` | `TaskSpec` JSON | `AgentResult` JSON |
-| `POST` | `/{agent_name}/submit` | `TaskSpec` JSON | `RunRecord` (run_id, state) |
-| `GET` | `/{agent_name}/runs/{run_id}` | – | `RunRecord` |
-| `GET` | `/{agent_name}/runs/{run_id}/events` | – | SSE stream |
+| `GET` | `/agents` | – | List of registered agent names |
+| `GET` | `/agents/{name}/schema` | – | JSON schema for the agent's input/output |
+| `POST` | `/agents/{name}/run` | `TaskSpec` JSON | `AgentResult` JSON |
+| `POST` | `/agents/{name}/gather` | `list[TaskSpec]` JSON | `list[AgentResult]` JSON |
+| `GET` | `/groups` | – | List of registered group names |
+| `GET` | `/groups/{name}/topology` | – | Group topology metadata |
+| `POST` | `/groups/{name}/run` | `TaskSpec` JSON | `AgentResult` or `GroupResult` JSON (see below) |
+| `POST` | `/submit` | `SubmitRequest` JSON | `{run_id}` |
+| `GET` | `/runs/{run_id}/status` | – | `RunStatus` |
+| `GET` | `/runs/{run_id}/result` | – | `AgentResult` or `GroupResult` JSON |
+| `GET` | `/runs/{run_id}/stream` | – | SSE stream of run events |
+| `POST` | `/runs/{run_id}/cancel` | – | `204` |
+| `GET` | `/events/stream` | – | SSE stream of all runtime events (when `sse_emitter=` is wired) |
 | `GET` | `/healthz` | – | `200` if alive |
 | `GET` | `/readyz` | – | `200` if broker connected, registry loaded |
+| `GET` | `/health` | – | Legacy alias for `/healthz` |
+
+`POST /groups/{name}/run` returns one of two shapes depending on how
+many terminal nodes fired at runtime:
+
+- **Single-leaf** (typical pipeline, branch routing where one
+  predicate fires) → standard `AgentResult` envelope
+  (`{agent_name, task_id, success, output, error, metadata}`).
+- **Multi-leaf** (moderator-and-specialists, parallel branches whose
+  conditions both fire) → `GroupResult` envelope
+  (`{group: true, outputs: {leaf_name: AgentResult, ...}, success,
+  metadata}`).
+
+The same shape comes back from `GET /runs/{run_id}/result` for
+async-submitted group runs — the run-store carries the original
+`AgentResult | GroupResult` and the result endpoint serialises it
+verbatim. Clients can discriminate on the `"group"` key.
 
 `/healthz` and `/readyz` are split per the conventional pattern —
 `/healthz` checks the process is alive; `/readyz` checks it can accept

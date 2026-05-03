@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import types as _types
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal, Self, Union
 
@@ -119,6 +120,15 @@ class AgentTeam(BaseModel):
                     f"{agent.input_type.__name__!r}; ambiguous routing"
                 )
             seen[agent.input_type] = delegate_name
+        # Freeze ``delegates`` to a read-only view. ``model_config(frozen=True)``
+        # only protects the attribute reference; the underlying dict
+        # would otherwise stay mutable, letting callers add or replace
+        # entries post-construction and bypass the validators above.
+        # Mirrors the ``GroupResult.outputs`` pattern.
+        if not isinstance(self.delegates, _types.MappingProxyType):
+            object.__setattr__(
+                self, "delegates", _types.MappingProxyType(dict(self.delegates))
+            )
         return self
 
 

@@ -339,3 +339,87 @@ async def test_team_dispatch_rejects_jobbackend_with_clear_error() -> None:
             await runtime.run_group(team, TaskSpec(input="..."))
     finally:
         await runtime.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Registry/executor identity guard
+# ---------------------------------------------------------------------------
+
+
+async def test_async_backend_rejects_registry_executor_split() -> None:
+    """If a caller passes both ``tool_registry`` and ``tool_executor`` and
+    the executor's registry isn't the same object, ``AsyncBackend``
+    rejects at construction. Otherwise team registrations would land
+    on one view and execution would miss them.
+    """
+    from murmur.tools.executor import ToolExecutor
+    from murmur.tools.registry import ToolRegistry
+
+    reg_a = ToolRegistry()
+    reg_b = ToolRegistry()
+    exec_with_b = ToolExecutor(reg_b)
+
+    with pytest.raises(ValueError, match="share the same registry"):
+        AsyncBackend(tool_registry=reg_a, tool_executor=exec_with_b)
+
+
+async def test_agent_runtime_rejects_registry_executor_split() -> None:
+    """Same identity rule on ``AgentRuntime`` — registrations on
+    ``runtime.tool_registry`` must be visible to ``runtime`` 's
+    executor at execution time.
+    """
+    from murmur.tools.executor import ToolExecutor
+    from murmur.tools.registry import ToolRegistry
+
+    reg_a = ToolRegistry()
+    reg_b = ToolRegistry()
+    exec_with_b = ToolExecutor(reg_b)
+
+    with pytest.raises(ValueError, match="share the same registry"):
+        AgentRuntime(tool_registry=reg_a, tool_executor=exec_with_b)
+
+
+async def test_async_backend_derives_registry_from_executor() -> None:
+    """When only ``tool_executor`` is passed, the backend's
+    ``tool_registry`` is the executor's registry — single source of
+    truth, no divergence path.
+    """
+    from murmur.tools.executor import ToolExecutor
+    from murmur.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    executor = ToolExecutor(reg)
+    backend = AsyncBackend(tool_executor=executor)
+    assert backend.tool_registry is reg
+
+
+async def test_run_group_rejects_non_group_non_team_input() -> None:
+    """``run_group`` accepts only ``AgentGroup | AgentTeam``. Anything
+    else surfaces a clear ``TypeError`` rather than crashing on a
+    missing attribute deep inside the runner.
+    """
+    runtime = AgentRuntime()
+    try:
+        with pytest.raises(TypeError, match="AgentGroup or AgentTeam"):
+            await runtime.run_group("not a group", TaskSpec(input="..."))  # ty: ignore[invalid-argument-type]
+    finally:
+        await runtime.shutdown()
+
+
+async def test_agent_team_delegates_is_immutable_after_construction() -> None:
+    """``AgentTeam.delegates`` is wrapped in ``MappingProxyType`` at
+    construction so callers can't mutate the mapping post-hoc and
+    bypass the validators.
+    """
+    coordinator = _agent("triage")
+    billing = _agent("billing-agent", input_type=_BillingInput)
+    team = AgentTeam(
+        name="t-frozen",
+        coordinator=coordinator,
+        delegates={"billing": billing},
+        output_type=_Resolution,
+    )
+    with pytest.raises(TypeError, match="does not support item assignment"):
+        team.delegates["new"] = billing  # ty: ignore[invalid-assignment]
+    with pytest.raises(TypeError, match="does not support item deletion"):
+        del team.delegates["billing"]  # ty: ignore[not-subscriptable]
