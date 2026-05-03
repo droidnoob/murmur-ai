@@ -56,6 +56,11 @@ class AsyncBackend:
         event_emitter: EventEmitter | None = None,
     ) -> None:
         self._tool_registry: ToolRegistry = tool_registry or ToolRegistry()
+        # Expose the registry as a public read-only attribute so callers
+        # that need to register tools where dispatch will look them up
+        # (e.g. AgentTeam's per-run delegate tool) can find the right
+        # one regardless of whether this backend was constructed by the
+        # runtime or injected with its own registry.
         self._emitter: EventEmitter = event_emitter or LogEventEmitter()
         # If the user passes a tool_executor, it carries its own emitter; we
         # don't second-guess. Otherwise build one that shares ours so both
@@ -65,6 +70,17 @@ class AsyncBackend:
         )
         self._tasks: dict[str, asyncio.Task[AgentResult[BaseModel]]] = {}
         self._killed: set[str] = set()
+
+    @property
+    def tool_registry(self) -> ToolRegistry:
+        """The :class:`ToolRegistry` this backend resolves tools against
+        at dispatch. Shared with :class:`AgentRuntime` when the runtime
+        constructed this backend; otherwise (when injected) the registry
+        the backend was given at construction. Callers needing to
+        register tools that dispatch will see — e.g. ``AgentTeam``'s
+        per-run ``delegate`` tool — go through this property.
+        """
+        return self._tool_registry
 
     async def spawn(
         self,

@@ -255,3 +255,87 @@ async def test_double_register_would_raise_without_unique_name() -> None:
         runtime.tool_registry.register("my-tool", dummy_tool)
     finally:
         await runtime.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Backend-coupling regression: the per-run delegate tool must land on
+# whichever ``ToolRegistry`` the dispatch path actually consults.
+# ---------------------------------------------------------------------------
+
+
+async def test_team_dispatch_uses_backend_tool_registry_for_injection() -> None:
+    """A user-injected ``AsyncBackend`` carries its own tool registry that
+    is *not* shared with ``runtime.tool_registry``. ``run_team`` must
+    register the per-run delegate tool on the registry the backend
+    actually uses at dispatch (the backend's own) — registering on
+    ``runtime.tool_registry`` would silently leave the tool invisible.
+    """
+    coordinator = _agent("triage")
+    billing = _agent("billing-agent", input_type=_BillingInput)
+    team = AgentTeam(
+        name="t-injected",
+        coordinator=coordinator,
+        delegates={"billing": billing},
+        output_type=_Resolution,
+    )
+    backend = AsyncBackend()
+    # Sanity: the backend's registry is a distinct object from any
+    # default the runtime would build.
+    assert backend.tool_registry is not None
+    runtime = AgentRuntime(backend=backend)
+    # Confirm divergence — runtime's view is separate from backend's.
+    assert runtime.tool_registry is not backend.tool_registry
+
+    captured_tool_names: list[str] = []
+    real_register = backend.tool_registry.register
+
+    def capturing_register(name: str, func: Any) -> None:
+        captured_tool_names.append(name)
+        real_register(name, func)
+
+    backend.tool_registry.register = capturing_register  # ty: ignore[invalid-assignment]
+    try:
+        # The dispatch will probably fail (no API key, no model) —
+        # we only care about *where* the per-run delegate tool got
+        # registered. ``contextlib.suppress`` keeps the test focused
+        # on the registration side-effect.
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            await runtime.run_group(team, TaskSpec(input="..."))
+    finally:
+        await runtime.shutdown()
+
+    # Exactly one delegate tool got registered on the backend's
+    # registry — registering on ``runtime.tool_registry`` would leave
+    # ``captured_tool_names`` empty.
+    matching = [
+        n for n in captured_tool_names if n.startswith("_team_t-injected_delegate_")
+    ]
+    assert len(matching) == 1
+
+
+async def test_team_dispatch_rejects_jobbackend_with_clear_error() -> None:
+    """Distributed team dispatch through ``JobBackend`` is not yet
+    supported — the modified coordinator + per-run delegate tool are
+    publisher-side constructs that don't survive the broker hop. Surface
+    the limitation cleanly rather than letting the worker silently
+    dispatch the un-modified coordinator (which has no ``delegate``
+    tool) and produce confusing failures.
+    """
+    from murmur.backends._inmemory_broker import InMemoryBroker
+
+    coordinator = _agent("triage")
+    billing = _agent("billing-agent", input_type=_BillingInput)
+    team = AgentTeam(
+        name="t-broker",
+        coordinator=coordinator,
+        delegates={"billing": billing},
+        output_type=_Resolution,
+    )
+    runtime = AgentRuntime(broker_instance=InMemoryBroker())
+    try:
+        with pytest.raises(NotImplementedError, match="JobBackend"):
+            await runtime.run_group(team, TaskSpec(input="..."))
+    finally:
+        await runtime.shutdown()
