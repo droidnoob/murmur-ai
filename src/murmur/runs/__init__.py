@@ -249,7 +249,12 @@ class InMemoryRunStore:
         self, run_id: str, result: AgentResult[BaseModel] | GroupResult
     ) -> None:
         rec = self._require(run_id)
-        rec.result = result
+        # Deep-copy so caller mutation of ``result.outputs`` (for
+        # GroupResult — the outputs dict is mutable post-revert from
+        # MappingProxyType) can't corrupt the stored record. Cheap
+        # in-process cost; persistent stores get the same safety
+        # implicitly via JSON serialisation.
+        rec.result = result.model_copy(deep=True)
 
     async def push_event(self, run_id: str, event: RunEvent) -> None:
         rec = self._require(run_id)

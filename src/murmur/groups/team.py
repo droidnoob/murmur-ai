@@ -206,6 +206,13 @@ def _make_delegate_tool(
     if not delegates:
         raise SpecValidationError("_make_delegate_tool requires at least one delegate")
 
+    # Snapshot the delegates mapping into an immutable dict so the
+    # closure's routing table can't be mutated post-factory by
+    # rewriting the team's stored ``delegates`` dict (post-construction
+    # mutation through the model's reference is undefined behaviour
+    # but technically possible — see ``AgentTeam._validate_team``).
+    # Fresh dict per factory call; the closure holds it privately.
+    delegates = dict(delegates)
     delegate_names = tuple(delegates.keys())
     # Dynamic Literal / Union construction — runtime values, can't be
     # static-checked. PydanticAI's tool-schema introspection consumes

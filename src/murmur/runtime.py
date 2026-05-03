@@ -313,14 +313,18 @@ class AgentRuntime:
     _LOCKED_AFTER_INIT: frozenset[str] = frozenset({"_tool_registry", "_tool_executor"})
 
     def __setattr__(self, name: str, value: object) -> None:
+        # Resolve via ``type(self)`` so subclasses that extend
+        # ``_LOCKED_AFTER_INIT`` with additional locked fields actually
+        # get their override honoured.
         if (
             self.__dict__.get("_init_complete")
-            and name in AgentRuntime._LOCKED_AFTER_INIT
+            and name in type(self)._LOCKED_AFTER_INIT
         ):
             raise AttributeError(
-                f"AgentRuntime.{name} is immutable after construction; "
-                f"swapping it would bypass the registry/executor identity "
-                f"invariant established in __init__"
+                f"{type(self).__name__}.{name} is immutable after "
+                f"construction; swapping it would bypass the "
+                f"registry/executor identity invariant established "
+                f"in __init__"
             )
         super().__setattr__(name, value)
 
