@@ -50,13 +50,14 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
 from murmur.core.errors import AllAgentsFailedError, SpecValidationError, TopologyError
 from murmur.groups._introspection import get_fan_out_field
-from murmur.types import AgentResult, TaskSpec
+from murmur.types import AgentResult, GroupResult, ResultMetadata, TaskSpec
 
 if TYPE_CHECKING:
     from murmur.agent import Agent
@@ -75,8 +76,21 @@ async def run_group(
     runtime: AgentRuntime,
     group: AgentGroup,
     task: TaskSpec,
-) -> AgentResult[BaseModel]:
-    """Execute ``group`` against ``task`` and return the terminal result."""
+) -> AgentResult[BaseModel] | GroupResult:
+    """Execute ``group`` against ``task`` and return the terminal result(s).
+
+    Single-terminal topologies — and branch-routing topologies where the
+    runtime predicates collapse onto a single fired leaf — return a
+    plain :class:`AgentResult`, identical to the pre-multi-terminal
+    contract. Topologies whose runtime walk fires N>=2 terminal nodes
+    return a :class:`GroupResult` keyed by ``Agent.name`` with
+    aggregate metadata.
+
+    Topology shape *alone* doesn't pick the return type — runtime
+    behaviour does. A two-leaf topology where one branch is gated by
+    a False ``Edge.condition`` still returns :class:`AgentResult`
+    because only one terminal actually fired.
+    """
     terminals = group.terminal_nodes()
     if not terminals:
         raise TopologyError(f"AgentGroup {group.name!r} has no terminal node")
@@ -121,21 +135,58 @@ async def run_group(
             f"AgentGroup {group.name!r} produced no terminal result — every "
             "outgoing edge was skipped by a False condition"
         )
-    if len(fired_terminals) > 1:
-        raise TopologyError(
-            f"AgentGroup {group.name!r} produced multiple terminal results "
-            f"({[t.name for t in fired_terminals]}); branch-routing predicates "
-            "must be mutually exclusive"
-        )
-    final = results[fired_terminals[0]]
-    if isinstance(final, list):
-        # A terminal that received a fan-out without a downstream synthesiser
-        # is a topology mistake — we don't have a single result to return.
-        raise TopologyError(
-            f"terminal node {fired_terminals[0].name!r} received a fan-out "
-            "batch without an aggregating downstream"
-        )
-    return final
+
+    if len(fired_terminals) == 1:
+        final = results[fired_terminals[0]]
+        if isinstance(final, list):
+            # A terminal that received a fan-out without a downstream
+            # synthesiser is a topology mistake — we don't have a single
+            # result to return.
+            raise TopologyError(
+                f"terminal node {fired_terminals[0].name!r} received a fan-out "
+                "batch without an aggregating downstream"
+            )
+        return final
+
+    # Multi-terminal: build a GroupResult keyed by agent name.
+    leaf_results: dict[str, AgentResult[BaseModel]] = {}
+    for terminal in fired_terminals:
+        node_output = results[terminal]
+        if isinstance(node_output, list):
+            raise TopologyError(
+                f"terminal node {terminal.name!r} received a fan-out batch "
+                "without an aggregating downstream"
+            )
+        leaf_results[terminal.name] = node_output
+    return GroupResult(
+        outputs=leaf_results,
+        metadata=_aggregate_group_metadata(leaf_results, task),
+    )
+
+
+def _aggregate_group_metadata(
+    leaf_results: Mapping[str, AgentResult[BaseModel]],
+    task: TaskSpec,
+) -> ResultMetadata:
+    """Combine per-leaf :class:`ResultMetadata` into a group-level snapshot.
+
+    Sums tokens and cost across every fired leaf; takes the max
+    duration (fired leaves run in parallel tiers so wall-clock isn't
+    additive); marks ``backend="group"`` and threads the originating
+    task's ``request_id`` as the trace id.
+    """
+    total_tokens = sum(r.metadata.tokens_used for r in leaf_results.values())
+    total_cost = sum(r.metadata.cost_usd for r in leaf_results.values())
+    max_duration = max(
+        (r.metadata.duration_ms for r in leaf_results.values()), default=0
+    )
+    return ResultMetadata(
+        duration_ms=max_duration,
+        tokens_used=total_tokens,
+        cost_usd=total_cost,
+        backend="group",
+        trace_id=task.request_id,
+    )
 
 
 # ---------------------------------------------------------------------------

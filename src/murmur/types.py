@@ -153,6 +153,50 @@ class AgentResult(BaseModel, Generic[T]):
         return self.error is None and self.output is not None
 
 
+class GroupResult(BaseModel):
+    """Multi-leaf result from :meth:`AgentRuntime.run_group`.
+
+    Returned when an :class:`AgentGroup` topology has more than one
+    terminal node fire — typically a moderator-and-specialists shape
+    where each specialist is its own leaf rather than feeding a
+    single synthesiser. Single-leaf topologies still return a plain
+    :class:`AgentResult` for backward compatibility.
+
+    Iteration: ``GroupResult.outputs`` is keyed by ``Agent.name`` so
+    callers can pick out a specific terminal by name. Use
+    :attr:`terminal` for the single-leaf convenience case.
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    outputs: Mapping[str, AgentResult[BaseModel]]
+    """Per-leaf results keyed by ``Agent.name``. A leaf that was
+    skipped at runtime (branch routing condition, heterogeneous
+    fan-out filter empty) is absent from this mapping — present
+    keys correspond to terminals that actually fired."""
+
+    metadata: ResultMetadata = Field(default_factory=ResultMetadata)
+    """Aggregate diagnostics across every fired leaf. ``tokens_used``
+    sums; ``duration_ms`` takes the max (parallel tiers don't add
+    durations); ``cost_usd`` sums; ``backend`` is the literal
+    string ``"group"``; ``trace_id`` mirrors the task's request_id."""
+
+    @property
+    def terminal(self) -> AgentResult[BaseModel]:
+        """Convenience accessor for single-leaf cases.
+
+        Raises :class:`ValueError` when the group fired more than one
+        terminal — callers must use the keyed ``outputs`` mapping in
+        that case.
+        """
+        if len(self.outputs) != 1:
+            raise ValueError(
+                f"GroupResult has {len(self.outputs)} terminals, not 1; "
+                f"use .outputs[name] to pick a specific leaf"
+            )
+        return next(iter(self.outputs.values()))
+
+
 class AgentHandle(BaseModel):
     """Opaque handle returned by a backend's ``spawn`` — used to kill / await."""
 

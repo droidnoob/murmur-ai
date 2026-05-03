@@ -220,10 +220,14 @@ async def test_run_group_round_trips_through_faststream_broker(
 ) -> None:
     """head → 10 minions (auto fan-out via FanOut) → summary, over a real
     FastStream wire format (Kafka / NATS / Rabbit / Redis)."""
+    from murmur.types import AgentResult
+
     publisher, crew = pipeline
     result = await publisher.run_group(
         crew, TaskSpec(input="What are the failure modes of LLM agents?")
     )
+    # Single-terminal pipeline — narrow run_group's union return type.
+    assert isinstance(result, AgentResult)
     assert result.is_ok()
     assert isinstance(result.output, FinalReport)
     assert result.output.findings_count == N_MINIONS

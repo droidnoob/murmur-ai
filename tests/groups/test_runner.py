@@ -29,7 +29,7 @@ from murmur.core.errors import AllAgentsFailedError, TopologyError
 from murmur.groups.edge import Edge
 from murmur.groups.spec import AgentGroup
 from murmur.runtime import AgentRuntime
-from murmur.types import FanOut, TaskSpec, TrustLevel
+from murmur.types import AgentResult, FanOut, GroupResult, TaskSpec, TrustLevel
 from murmur.worker.worker import Worker
 
 # ---------------------------------------------------------------------------
@@ -212,6 +212,21 @@ async def wired(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Test helper — narrow run_group's union return type to AgentResult.
+# Used by every pre-multi-terminal test (single-terminal expected).
+# ---------------------------------------------------------------------------
+
+
+def _assert_single_terminal(
+    result: AgentResult[BaseModel] | GroupResult,
+) -> AgentResult[BaseModel]:
+    """Assert run_group returned a single-terminal AgentResult and narrow."""
+    assert not isinstance(result, GroupResult), (
+        f"expected single-terminal AgentResult; got GroupResult with "
+        f"{len(result.outputs)} terminals"
+    )
+    return result
 
 
 async def test_run_group_with_fan_out_via_mapper(
@@ -237,9 +252,11 @@ async def test_run_group_with_fan_out_via_mapper(
         },
     )
 
-    result = await publisher.run_group(
-        crew,
-        TaskSpec(input="What are the failure modes of LLM agents?"),
+    result = _assert_single_terminal(
+        await publisher.run_group(
+            crew,
+            TaskSpec(input="What are the failure modes of LLM agents?"),
+        )
     )
     assert result.is_ok()
     assert isinstance(result.output, FinalReport)
@@ -267,7 +284,9 @@ async def test_run_group_with_auto_fan_out_via_FanOut_annotation(
         },
     )
 
-    result = await publisher.run_group(crew, TaskSpec(input="..."))
+    result = _assert_single_terminal(
+        await publisher.run_group(crew, TaskSpec(input="..."))
+    )
     assert result.is_ok()
     assert isinstance(result.output, FinalReport)
     assert result.output.findings_count == N_MINIONS
@@ -290,7 +309,9 @@ async def test_run_group_with_no_mapper_no_fan_out_serializes_json(
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="research"))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="research"))
+        )
         assert result.is_ok()
         assert isinstance(result.output, FinalReport)
     finally:
@@ -327,28 +348,41 @@ async def test_run_group_raises_AllAgentsFailedError_when_all_minions_fail(
         await worker.stop()
 
 
-async def test_run_group_rejects_unconditional_multi_terminal(
+async def test_run_group_unconditional_multi_terminal_returns_group_result(
     head_agent: Agent,
     minion_agent: Agent,
     summary_agent: Agent,
 ) -> None:
-    """Multi-terminal topology without branch-routing conditions — every
-    terminal fires at runtime, which the runner rejects. Branch routing
-    (#26) resolves this by gating each branch with a mutually-exclusive
-    condition.
+    """Multi-terminal topology without branch-routing conditions —
+    every terminal fires at runtime and the runner returns a
+    :class:`GroupResult` keyed by ``Agent.name``. The previous
+    "multiple terminal results — branch-routing must be mutually
+    exclusive" rejection no longer applies; multi-terminal is now
+    a legal shape that the topology itself signals.
     """
+    from murmur import GroupResult
+
     publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
     try:
         crew = AgentGroup(
             name="two-terminals",
             topology={
-                head_agent: Edge(to=(minion_agent, summary_agent)),
+                # Explicit mapper sends one TaskSpec to each downstream so
+                # terminals receive single AgentResults rather than fan-out
+                # batches (head_agent's output_type carries a FanOut field).
+                head_agent: Edge(
+                    to=(minion_agent, summary_agent),
+                    mapper=lambda _: TaskSpec(input="dispatched"),
+                ),
                 minion_agent: Edge.terminal(),
                 summary_agent: Edge.terminal(),
             },
         )
-        with pytest.raises(TopologyError, match="multiple terminal results"):
-            await publisher.run_group(crew, TaskSpec(input="..."))
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert isinstance(result, GroupResult)
+        assert set(result.outputs.keys()) == {minion_agent.name, summary_agent.name}
+        assert all(r.is_ok() for r in result.outputs.values())
+        assert result.metadata.backend == "group"
     finally:
         await worker.stop()
 
@@ -377,7 +411,9 @@ async def test_condition_true_fires_edge(
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
         assert result.agent_name == summary_agent.name
     finally:
@@ -413,7 +449,9 @@ async def test_branch_routing_one_of_two_fires(
                 minion_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
         # Only the summary branch fired.
         assert result.agent_name == summary_agent.name
@@ -447,7 +485,9 @@ async def test_async_condition_is_awaited(
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
         assert result.agent_name == summary_agent.name
     finally:
@@ -617,7 +657,9 @@ async def test_multi_input_two_upstreams_converging(
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
         assert result.agent_name == summary_agent.name
         assert seen_keys["keys"] == [auditor_agent.name, minion_agent.name]
@@ -672,7 +714,9 @@ async def test_multi_input_one_upstream_dead_mapper_sees_empty_list(
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
         # auditor key is present but empty.
         assert captured["inputs"][auditor_agent.name] == []
@@ -891,7 +935,9 @@ async def test_run_group_dispatches_tier_siblings_in_parallel(
             },
         )
         async with asyncio.timeout(5):
-            result = await publisher.run_group(crew, TaskSpec(input="..."))
+            result = _assert_single_terminal(
+                await publisher.run_group(crew, TaskSpec(input="..."))
+            )
         assert result.is_ok()
         assert result.agent_name == summary_agent.name
     finally:
@@ -935,7 +981,9 @@ async def test_run_group_linear_dag_skips_tier_parallel_helper(
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
         assert calls == [], (
             "linear DAG should not have invoked the tier-parallel helper "
@@ -991,7 +1039,9 @@ async def test_run_group_invokes_tier_parallel_helper_for_sibling_tiers(
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
         # Exactly one tier had >=2 siblings: [minion, auditor].
         assert calls == [(minion_agent.name, auditor_agent.name)]
@@ -1076,7 +1126,9 @@ async def test_run_group_sibling_ancestors_only_contain_run_group_parent(
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
     finally:
         _current_spawn.reset(token)
@@ -1376,7 +1428,9 @@ async def test_run_group_heterogeneous_fanout_routes_items_by_exact_type(
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
         # Each handler ran on its one matching item — fan-out lists of size 1.
         handler_names = (
@@ -1444,7 +1498,9 @@ async def test_run_group_heterogeneous_fanout_repeated_type_fires_handler_n_time
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
         assert len(captured["inputs"][question_agent.name]) == 3
         assert len(captured["inputs"][statement_agent.name]) == 1
@@ -1476,7 +1532,9 @@ async def test_single_type_fanout_still_works_unchanged(
                 summary_agent: Edge.terminal(),
             },
         )
-        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
         assert result.is_ok()
         assert isinstance(result.output, FinalReport)
         assert result.output.findings_count == N_MINIONS
@@ -1535,3 +1593,217 @@ async def test_dispatch_single_input_raises_on_unknown_item_type(
             )
     finally:
         await runtime.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# GroupResult — multi-terminal DAG semantics
+# ---------------------------------------------------------------------------
+
+
+async def test_run_group_single_terminal_returns_agent_result_unchanged(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Backward compat: single-terminal topology still returns an
+    ``AgentResult`` directly, not wrapped in a ``GroupResult``.
+    """
+    from murmur import GroupResult
+
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+        crew = AgentGroup(
+            name="single-terminal",
+            topology={
+                head_agent: Edge(
+                    to=(summary_agent,), mapper=lambda _: TaskSpec(input="x")
+                ),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
+        assert not isinstance(result, GroupResult)
+        assert result.is_ok()
+        assert result.agent_name == summary_agent.name
+    finally:
+        await worker.stop()
+
+
+async def test_group_result_terminal_property_works_for_single_leaf() -> None:
+    """``GroupResult.terminal`` returns the single result; raises on N>1."""
+    from murmur import AgentResult, GroupResult, ResultMetadata
+
+    only = AgentResult[BaseModel](
+        output=None,
+        error=ValueError("x"),
+        metadata=ResultMetadata(backend="test"),
+        agent_name="solo",
+        task_id="t1",
+    )
+    one = GroupResult(outputs={"solo": only})
+    assert one.terminal is only
+
+    two = GroupResult(
+        outputs={
+            "a": only.model_copy(update={"agent_name": "a"}),
+            "b": only.model_copy(update={"agent_name": "b"}),
+        }
+    )
+    with pytest.raises(ValueError, match="2 terminals"):
+        _ = two.terminal
+
+
+async def test_group_result_aggregates_metadata_correctly(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """GroupResult metadata sums tokens, takes max duration, marks
+    backend='group', and threads the originating task's request_id.
+    """
+    from murmur import GroupResult
+
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+        crew = AgentGroup(
+            name="aggregate-metadata",
+            topology={
+                head_agent: Edge(
+                    to=(minion_agent, summary_agent),
+                    mapper=lambda _: TaskSpec(input="d"),
+                ),
+                minion_agent: Edge.terminal(),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        task = TaskSpec(input="...")
+        result = await publisher.run_group(crew, task)
+        assert isinstance(result, GroupResult)
+        per_leaf_tokens = [r.metadata.tokens_used for r in result.outputs.values()]
+        per_leaf_durations = [r.metadata.duration_ms for r in result.outputs.values()]
+        assert result.metadata.tokens_used == sum(per_leaf_tokens)
+        assert result.metadata.duration_ms == max(per_leaf_durations)
+        assert result.metadata.backend == "group"
+        assert result.metadata.trace_id == task.request_id
+    finally:
+        await worker.stop()
+
+
+async def test_branch_routing_one_branch_fires_returns_agent_result(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Branch-routing topology where one of two condition predicates
+    fires: only one terminal runs, return shape is ``AgentResult`` (not
+    ``GroupResult``) — matches the existing single-fired-terminal
+    contract.
+    """
+    from murmur import GroupResult
+
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+        crew = AgentGroup(
+            name="branch-1-of-2",
+            topology={
+                head_agent: (
+                    Edge(
+                        to=(summary_agent,),
+                        mapper=lambda _: TaskSpec(input="ok"),
+                        condition=lambda out: out.reasoning == "r",
+                    ),
+                    Edge(
+                        to=(minion_agent,),
+                        mapper=lambda _: TaskSpec(input="alt"),
+                        condition=lambda out: out.reasoning != "r",
+                    ),
+                ),
+                summary_agent: Edge.terminal(),
+                minion_agent: Edge.terminal(),
+            },
+        )
+        result = _assert_single_terminal(
+            await publisher.run_group(crew, TaskSpec(input="..."))
+        )
+        assert not isinstance(result, GroupResult)
+        assert result.is_ok()
+        assert result.agent_name == summary_agent.name
+    finally:
+        await worker.stop()
+
+
+async def test_branch_routing_both_branches_fire_returns_group_result(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Branch-routing where both conditions fire (intentionally not
+    mutually exclusive) returns a ``GroupResult``. The previous
+    behaviour — rejecting non-exclusive branch routing — is gone.
+    """
+    from murmur import GroupResult
+
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+        crew = AgentGroup(
+            name="branch-both",
+            topology={
+                head_agent: (
+                    Edge(
+                        to=(summary_agent,),
+                        mapper=lambda _: TaskSpec(input="ok"),
+                        condition=lambda _: True,
+                    ),
+                    Edge(
+                        to=(minion_agent,),
+                        mapper=lambda _: TaskSpec(input="alt"),
+                        condition=lambda _: True,
+                    ),
+                ),
+                summary_agent: Edge.terminal(),
+                minion_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert isinstance(result, GroupResult)
+        assert set(result.outputs.keys()) == {summary_agent.name, minion_agent.name}
+    finally:
+        await worker.stop()
+
+
+async def test_run_group_all_branches_skipped_still_raises(
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """If every outgoing edge from the entry returns False, no terminal
+    fires — still TopologyError, same as today. (Multi-terminal does
+    not change this rejection.)
+    """
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+        crew = AgentGroup(
+            name="all-false",
+            topology={
+                head_agent: (
+                    Edge(
+                        to=(summary_agent,),
+                        mapper=lambda _: TaskSpec(input="x"),
+                        condition=lambda _: False,
+                    ),
+                    Edge(
+                        to=(minion_agent,),
+                        mapper=lambda _: TaskSpec(input="x"),
+                        condition=lambda _: False,
+                    ),
+                ),
+                summary_agent: Edge.terminal(),
+                minion_agent: Edge.terminal(),
+            },
+        )
+        with pytest.raises(TopologyError, match="produced no terminal result"):
+            await publisher.run_group(crew, TaskSpec(input="..."))
+    finally:
+        await worker.stop()

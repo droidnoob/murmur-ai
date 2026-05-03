@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from murmur.core.errors import RegistryError
+from murmur.core.errors import AllAgentsFailedError, RegistryError
 from murmur.runs import (
     InMemoryRunStore,
     RunEvent,
@@ -40,7 +40,7 @@ from murmur.runs import (
     RunStatus,
 )
 from murmur.server.errors import ErrorResponse
-from murmur.types import AgentResult, TaskSpec
+from murmur.types import AgentResult, GroupResult, TaskSpec
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -538,7 +538,30 @@ class AgentServer:
         try:
             if is_group:
                 group = self._require_group(target)
-                result = await self._runtime.run_group(group, task)
+                group_result = await self._runtime.run_group(group, task)
+                # Multi-terminal GroupResult collapses into a synthetic
+                # AgentResult for the run-store + state machine — the store
+                # tracks one result per run; multi-leaf details ship to the
+                # client through ``_serialize_result``. The synthetic result
+                # mirrors the group's aggregate metadata; success means
+                # every fired leaf succeeded.
+                if isinstance(group_result, GroupResult):
+                    succeeded = all(
+                        leaf.is_ok() for leaf in group_result.outputs.values()
+                    )
+                    result: AgentResult[BaseModel] = AgentResult[BaseModel](
+                        output=None,
+                        error=None
+                        if succeeded
+                        else AllAgentsFailedError(
+                            f"GroupResult for {target!r} contains failed leaf(s)"
+                        ),
+                        metadata=group_result.metadata,
+                        agent_name=target,
+                        task_id=task.id,
+                    )
+                else:
+                    result = group_result
             else:
                 agent = self._require_agent(target)
                 result = await self._runtime.run(agent, task)
@@ -604,8 +627,23 @@ def _summarise_instructions(instructions: str) -> str:
     return first_line
 
 
-def _serialize_result(result: AgentResult[BaseModel]) -> dict[str, object]:
-    """JSON-friendly view of an :class:`AgentResult`. Errors stringified."""
+def _serialize_result(
+    result: AgentResult[BaseModel] | GroupResult,
+) -> dict[str, object]:
+    """JSON-friendly view of an :class:`AgentResult` or :class:`GroupResult`.
+
+    Errors are stringified. Multi-leaf :class:`GroupResult` serialises as
+    ``{"group": True, "outputs": {leaf_name: serialized, ...}, "metadata": ...}``.
+    """
+    if isinstance(result, GroupResult):
+        return {
+            "group": True,
+            "outputs": {
+                name: _serialize_result(leaf) for name, leaf in result.outputs.items()
+            },
+            "success": all(leaf.is_ok() for leaf in result.outputs.values()),
+            "metadata": result.metadata.model_dump(),
+        }
     return {
         "agent_name": result.agent_name,
         "task_id": result.task_id,

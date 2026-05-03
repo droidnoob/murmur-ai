@@ -46,7 +46,7 @@ from murmur.middleware.retry import RetryMiddleware
 from murmur.middleware.timeout import TimeoutMiddleware
 from murmur.tools.executor import ToolExecutor
 from murmur.tools.registry import ToolRegistry
-from murmur.types import AgentContext, AgentResult, TaskSpec
+from murmur.types import AgentContext, AgentResult, GroupResult, TaskSpec
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -779,12 +779,24 @@ class AgentRuntime:
         self,
         group: AgentGroup,
         task: TaskSpec,
-    ) -> AgentResult[BaseModel]:
+    ) -> AgentResult[BaseModel] | GroupResult:
         """Walk an ``AgentGroup`` topology against ``task``.
 
-        Returns the terminal agent's result. Failed slots in fan-out tiers
-        are filtered before downstream mappers run; if every slot in a tier
-        fails, raises :class:`murmur.core.errors.AllAgentsFailedError`.
+        Returns one of two shapes depending on how many terminal nodes
+        actually fire:
+
+        - Exactly one terminal — typical single-leaf or branch-routed
+          topology — returns a plain :class:`AgentResult`. Identical
+          to the pre-multi-terminal contract.
+        - More than one terminal — moderator-and-specialists shape
+          where each leaf is its own terminal — returns a
+          :class:`GroupResult` keyed by ``Agent.name`` with
+          aggregate metadata (summed tokens, max duration,
+          ``backend="group"``).
+
+        Failed slots in fan-out tiers are filtered before downstream
+        mappers run; if every slot in a tier fails, raises
+        :class:`murmur.core.errors.AllAgentsFailedError`.
 
         Emits :data:`EventType.GROUP_STARTED` before traversal and
         :data:`EventType.GROUP_COMPLETED` after the terminal result settles.
