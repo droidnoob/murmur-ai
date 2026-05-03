@@ -385,6 +385,45 @@ emit the final draft.
 `AgentGroup` with linear topology — same as the single-pass research
 example above. No special construct.
 
+### Cross-run memory
+
+Persistent memory (vector stores, RAG, "remember the user across
+sessions") is **not** a Murmur primitive. Build it as a tool against
+your own store; the agent dispatches `recall_memory(query)` /
+`store_memory(key, value)` like any other tool, and the runtime stays
+out of the persistence path.
+
+```python
+runtime.tool_registry.register("recall_memory", recall_memory)
+runtime.tool_registry.register("store_memory", store_memory)
+
+librarian = Agent(
+    name="librarian",
+    instructions="Always recall before answering; persist new facts.",
+    tools=frozenset({"recall_memory", "store_memory"}),
+    output_type=FinalAnswer,
+)
+
+# Two independent runs. The store persists across them via the tool's
+# closure — Murmur's AgentContext.messages is per-run only.
+await runtime.run(librarian, TaskSpec(input="Remember teal."))
+await runtime.run(librarian, TaskSpec(input="What's my colour?"))
+```
+
+See [`examples/memory_via_tool.py`](https://github.com/anthropics/murmur-ai/blob/main/examples/memory_via_tool.py)
+for a complete runnable example with a stub store you swap for Chroma,
+sqlite-vec, pgvector, or Redis at the closure boundary. The runtime sees
+two independent dispatches; the persistence is yours.
+
+This boundary is intentional. CrewAI's ``memory=True`` collapses
+short-term context, long-term embeddings, and entity memory under one
+flag; Murmur splits the layers so the trade-offs stay visible:
+
+- `AgentContext.messages` — per-run conversation context (current).
+- `AgentTeam.retain_delegate_history` — per-team-run delegate session
+  memory (added with `AgentTeam`).
+- Cross-run memory — your tool, your store.
+
 ## What every coordination primitive shares
 
 The runtime applies the same guarantees to every dispatch — single agent,

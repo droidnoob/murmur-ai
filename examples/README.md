@@ -12,6 +12,7 @@ Each file is a self-contained, runnable program. Set `ANTHROPIC_API_KEY`
 | [`events_dashboard.py`](events_dashboard.py) | `SSEEventEmitter` wired to a Starlette `/events/stream` | [`events.md`](../docs/concepts/events.md) |
 | [`mcp.py`](mcp.py) | Agent consuming an MCP server via `mcp_stdio` + `allow=` | [`mcp.md`](../docs/concepts/mcp.md) |
 | [`spawn_agents.py`](spawn_agents.py) | Orchestrator delegates to children via `spawn_agents` | [`agents.md` — Templates + fan-out](../docs/concepts/agents.md#templates--shared-config-across-a-fleet) |
+| [`memory_via_tool.py`](memory_via_tool.py) | Cross-run memory pattern: persistence via two tools | [`coordination.md`](../docs/concepts/coordination.md) |
 
 ## Running
 
