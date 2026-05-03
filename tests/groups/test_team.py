@@ -421,6 +421,109 @@ async def test_delegate_tool_propagates_dispatch_failure_as_tool_error() -> None
         await runtime.shutdown()
 
 
+async def test_delegate_tool_rejects_mismatched_input_type(
+    billing: Agent, technical: Agent
+) -> None:
+    """``delegate("billing", TechnicalInput(...))`` is schema-valid under the
+    raw ``Literal+Union`` advertisement (PydanticAI sees an enum target
+    and a union input independently). The runtime guard catches the
+    mismatch before dispatch and surfaces it as ``ToolExecutionError``
+    so the coordinator's tool loop sees the failure inline.
+    """
+    runtime = _canned_runtime({billing.name: Resolution(summary="b").model_dump()})
+    try:
+        tool = _make_delegate_tool(
+            runtime,
+            {"billing": billing, "technical": technical},
+            retain_history=False,
+        )
+        with pytest.raises(ToolExecutionError, match="expects input of type"):
+            await tool(target="billing", input=TechnicalInput(error_code="E0"))
+    finally:
+        await runtime.shutdown()
+
+
+async def test_delegate_tool_enforces_max_rounds(billing: Agent) -> None:
+    """``max_rounds`` caps total dispatches per factory call. Independent
+    of ``RuntimeOptions.max_spawn_depth`` (which still bounds total
+    cascade depth across the whole runtime) — this knob fires
+    team-locally so a runaway coordinator can't burn through delegates
+    in a tight loop.
+    """
+    runtime = _canned_runtime({billing.name: Resolution(summary="ok").model_dump()})
+    try:
+        tool = _make_delegate_tool(
+            runtime,
+            {"billing": billing},
+            retain_history=False,
+            max_rounds=2,
+        )
+        await tool(target="billing", input=BillingInput(invoice_id="A"))
+        await tool(target="billing", input=BillingInput(invoice_id="B"))
+        with pytest.raises(ToolExecutionError, match="max_rounds=2 reached"):
+            await tool(target="billing", input=BillingInput(invoice_id="C"))
+    finally:
+        await runtime.shutdown()
+
+
+async def test_delegate_tool_normalises_runtime_errors_to_tool_execution_error(
+    coordinator: Agent, billing: Agent
+) -> None:
+    """``runtime.run`` rejections that fire before the backend sees the
+    dispatch (``SpawnCycleError`` here) escape as ``MurmurError``
+    subclasses. The factory wraps them in ``ToolExecutionError`` so the
+    coordinator sees a uniform shape regardless of where the failure
+    originated.
+    """
+    from murmur.runtime import _current_spawn, _SpawnFrame
+
+    runtime = _canned_runtime({billing.name: Resolution(summary="x").model_dump()})
+    # Pre-set the spawn chain so ``billing`` is on it — runtime.run
+    # rejects the next dispatch as a SpawnCycleError before any backend
+    # call.
+    parent_frame = _SpawnFrame(
+        agent_name=billing.name,
+        agent_context=AgentContext(),
+        trace_id="t-pre",
+    )
+    token = _current_spawn.set(parent_frame)
+    try:
+        tool = _make_delegate_tool(runtime, {"billing": billing}, retain_history=False)
+        with pytest.raises(
+            ToolExecutionError, match="delegate 'billing' failed: SpawnCycleError"
+        ):
+            await tool(target="billing", input=BillingInput(invoice_id="A"))
+    finally:
+        _current_spawn.reset(token)
+        await runtime.shutdown()
+
+
+async def test_run_group_with_agent_team_raises_not_implemented(
+    coordinator: Agent, billing: Agent
+) -> None:
+    """``AgentRuntime.run_group(team, ...)`` raises ``NotImplementedError``
+    until the polymorphic team-dispatch lands in the next bead — the
+    runner expected ``AgentGroup.topology`` and would crash otherwise.
+    Surface the WIP state cleanly so the public API doesn't lie about
+    being functional.
+    """
+    from murmur.runtime import AgentRuntime
+    from murmur.types import TaskSpec
+
+    team = AgentTeam(
+        name="customer-support",
+        coordinator=coordinator,
+        delegates={"billing": billing},
+        output_type=Resolution,
+    )
+    runtime = AgentRuntime()
+    try:
+        with pytest.raises(NotImplementedError, match="AgentTeam"):
+            await runtime.run_group(team, TaskSpec(input="..."))
+    finally:
+        await runtime.shutdown()
+
+
 async def test_delegate_tool_overrides_null_context_passer(
     billing: Agent,
 ) -> None:

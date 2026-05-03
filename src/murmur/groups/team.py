@@ -34,7 +34,7 @@ from typing import Any, Literal, Self, Union
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from murmur.agent import Agent
-from murmur.core.errors import SpecValidationError, ToolExecutionError
+from murmur.core.errors import MurmurError, SpecValidationError, ToolExecutionError
 from murmur.types import AgentContext, TaskSpec
 
 
@@ -169,6 +169,7 @@ def _make_delegate_tool(
     delegates: Mapping[str, Agent],
     *,
     retain_history: bool,
+    max_rounds: int | None = None,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """Build a typed ``delegate(target, input)`` callable for one team run.
 
@@ -205,18 +206,52 @@ def _make_delegate_tool(
     histories: dict[str, list[Mapping[str, str]]] = {
         name: [] for name in delegate_names
     }
+    # Per-run round counter — bumped on every delegate dispatch so a
+    # runaway coordinator can't burn through delegates indefinitely.
+    # Independent of ``RuntimeOptions.max_spawn_depth`` (which still
+    # bounds total cascade depth).
+    rounds = [0]
 
     async def delegate(target: target_literal, input: input_union) -> dict[str, Any]:  # ty: ignore[invalid-type-form]
         agent = delegates[target]
-        if retain_history:
-            substituted = agent.model_copy(
-                update={"context_passer": _HistoryContextPasser(histories[target])}
+        # Schema-side mismatch guard. ``Literal[*names] + Union[*types]``
+        # advertises a closed enum + a typed input but those are
+        # independent in JSON-schema land — PydanticAI accepts any
+        # (target, input_member) pair. Reject mismatched routings here
+        # so the coordinator's tool loop sees the failure inline.
+        if agent.input_type is not None and not isinstance(input, agent.input_type):
+            raise ToolExecutionError(
+                f"delegate {target!r} expects input of type "
+                f"{agent.input_type.__name__!r}, got "
+                f"{type(input).__name__!r}"
             )
-            result = await runtime.run(
-                substituted, TaskSpec(input=input.model_dump_json())
+        if max_rounds is not None and rounds[0] >= max_rounds:
+            raise ToolExecutionError(
+                f"AgentTeam delegate budget exhausted: max_rounds={max_rounds} reached"
             )
-        else:
-            result = await runtime.run(agent, TaskSpec(input=input.model_dump_json()))
+        rounds[0] += 1
+
+        try:
+            if retain_history:
+                substituted = agent.model_copy(
+                    update={"context_passer": _HistoryContextPasser(histories[target])}
+                )
+                result = await runtime.run(
+                    substituted, TaskSpec(input=input.model_dump_json())
+                )
+            else:
+                result = await runtime.run(
+                    agent, TaskSpec(input=input.model_dump_json())
+                )
+        except MurmurError as exc:
+            # Runtime-level rejections (SpawnCycleError, DepthLimitError,
+            # SpawnCapError, BudgetExceededError) can fire before the
+            # backend receives the dispatch. Normalise them to the same
+            # ToolExecutionError shape the per-call failure path emits
+            # so the coordinator sees a consistent error surface.
+            raise ToolExecutionError(
+                f"delegate {target!r} failed: {type(exc).__name__}: {exc}"
+            ) from exc
         if not result.is_ok():
             raise ToolExecutionError(f"delegate {target!r} failed: {result.error}")
         output_dump: dict[str, Any] = (

@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from murmur.core.protocols.registry import Registry
     from murmur.core.protocols.toolsets import ToolsetProvider
     from murmur.groups.spec import AgentGroup
+    from murmur.groups.team import AgentTeam
 
 
 _FASTSTREAM_SCHEMES: frozenset[str] = frozenset({"kafka", "nats", "amqp", "redis"})
@@ -777,7 +778,7 @@ class AgentRuntime:
 
     async def run_group(
         self,
-        group: AgentGroup,
+        group: AgentGroup | AgentTeam,
         task: TaskSpec,
     ) -> AgentResult[BaseModel] | GroupResult:
         """Walk an ``AgentGroup`` topology against ``task``.
@@ -807,6 +808,20 @@ class AgentRuntime:
         # avoid circular import at module load time.
         from murmur.events.types import EventType, RuntimeEvent
         from murmur.groups.runner import run_group as _run_group
+        from murmur.groups.team import AgentTeam as _AgentTeam
+
+        if isinstance(group, _AgentTeam):
+            # ``AgentTeam`` dispatch — auto-register the typed delegate
+            # tool on the coordinator and run that single agent — lands
+            # in a follow-up work unit on the coordination-v2 epic.
+            # Until then, surface a clear error rather than letting the
+            # AgentGroup runner crash on the missing ``topology``
+            # attribute.
+            raise NotImplementedError(
+                "AgentRuntime.run_group does not yet dispatch AgentTeam; "
+                "the polymorphic team-dispatch path is the next bead on "
+                "the coordination-v2 epic. Use AgentGroup for now."
+            )
 
         start = time.perf_counter()
         await self._emitter.emit(
