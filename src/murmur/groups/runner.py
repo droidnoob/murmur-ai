@@ -48,6 +48,7 @@ write an explicit aggregator rather than face an implicit cross-product.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import TYPE_CHECKING
 
@@ -79,40 +80,52 @@ async def run_group(
     terminals = group.terminal_nodes()
     if not terminals:
         raise TopologyError(f"AgentGroup {group.name!r} has no terminal node")
-    order = group.topological_order()
+    tiers = group.topological_tiers()
     results: dict[Agent, _NodeOutput] = {}
     incoming: dict[Agent, list[tuple[Agent, Edge]]] = _incoming_edges(group)
     skipped: set[Agent] = set()
 
-    for node in order:
-        upstream_pairs = incoming.get(node, [])
-        if not upstream_pairs:
-            # Entry node — receives the original TaskSpec.
-            results[node] = await runtime.run(node, task)
+    for tier in tiers:
+        if len(tier) == 1:
+            # Fast path — preserves zero-overhead dispatch for linear DAGs.
+            await _walk_one(
+                node=tier[0],
+                runtime=runtime,
+                task=task,
+                incoming=incoming,
+                results=results,
+                skipped=skipped,
+            )
             continue
 
-        if len(upstream_pairs) == 1:
-            dispatched = await _dispatch_single_input(
-                runtime=runtime,
-                node=node,
-                upstream=upstream_pairs[0][0],
-                edge=upstream_pairs[0][1],
-                results=results,
-                skipped=skipped,
-            )
-        else:
-            dispatched = await _dispatch_multi_input(
-                runtime=runtime,
-                node=node,
-                upstream_pairs=upstream_pairs,
-                results=results,
-                skipped=skipped,
-            )
-
-        if isinstance(dispatched, _Skipped):
-            skipped.add(node)
-        else:
-            results[node] = dispatched
+        # Tier with N>=2 sibling nodes (no inter-tier dependencies, by
+        # construction of topological_tiers). Dispatch concurrently.
+        # ``return_exceptions=False`` means the first dispatch helper to
+        # raise (TopologyError from a condition predicate, AllAgentsFailedError
+        # from a dead upstream, etc.) aborts the run_group; sibling
+        # dispatches already in flight are not cancelled but their
+        # eventual results are discarded. ``runtime.run`` itself never
+        # raises — failures land in ``AgentResult.error`` — so this only
+        # fires for the structural errors above.
+        tier_outputs = await asyncio.gather(
+            *(
+                _resolve_node(
+                    node=node,
+                    runtime=runtime,
+                    task=task,
+                    incoming=incoming,
+                    results=results,
+                    skipped=skipped,
+                )
+                for node in tier
+            ),
+            return_exceptions=False,
+        )
+        for node, dispatched in zip(tier, tier_outputs, strict=True):
+            if isinstance(dispatched, _Skipped):
+                skipped.add(node)
+            else:
+                results[node] = dispatched
 
     fired_terminals = [t for t in terminals if t in results]
     if not fired_terminals:
@@ -149,6 +162,78 @@ class _Skipped:
 
 
 _SKIPPED = _Skipped()
+
+
+# ---------------------------------------------------------------------------
+# Per-node walk
+# ---------------------------------------------------------------------------
+
+
+async def _walk_one(
+    *,
+    node: Agent,
+    runtime: AgentRuntime,
+    task: TaskSpec,
+    incoming: dict[Agent, list[tuple[Agent, Edge]]],
+    results: dict[Agent, _NodeOutput],
+    skipped: set[Agent],
+) -> None:
+    """Resolve and dispatch ``node``, mutating ``results``/``skipped`` in place.
+
+    Used on the single-tier fast path. Mirrors the inline behaviour the
+    walker had before tier-parallelism — preserved here so linear DAGs
+    don't pay any ``asyncio.gather`` overhead.
+    """
+    dispatched = await _resolve_node(
+        node=node,
+        runtime=runtime,
+        task=task,
+        incoming=incoming,
+        results=results,
+        skipped=skipped,
+    )
+    if isinstance(dispatched, _Skipped):
+        skipped.add(node)
+    else:
+        results[node] = dispatched
+
+
+async def _resolve_node(
+    *,
+    node: Agent,
+    runtime: AgentRuntime,
+    task: TaskSpec,
+    incoming: dict[Agent, list[tuple[Agent, Edge]]],
+    results: dict[Agent, _NodeOutput],
+    skipped: set[Agent],
+) -> _NodeOutput | _Skipped:
+    """Compute the dispatch for one node — entry, single-input, or multi-input.
+
+    Reads ``results`` and ``skipped`` but never writes them; the caller is
+    responsible for storing the outcome. Read-only access keeps the
+    function safe to invoke under ``asyncio.gather`` for sibling tiers
+    where each task only sees state that was committed by *earlier* tiers.
+    """
+    upstream_pairs = incoming.get(node, [])
+    if not upstream_pairs:
+        # Entry node — receives the original TaskSpec.
+        return await runtime.run(node, task)
+    if len(upstream_pairs) == 1:
+        return await _dispatch_single_input(
+            runtime=runtime,
+            node=node,
+            upstream=upstream_pairs[0][0],
+            edge=upstream_pairs[0][1],
+            results=results,
+            skipped=skipped,
+        )
+    return await _dispatch_multi_input(
+        runtime=runtime,
+        node=node,
+        upstream_pairs=upstream_pairs,
+        results=results,
+        skipped=skipped,
+    )
 
 
 # ---------------------------------------------------------------------------

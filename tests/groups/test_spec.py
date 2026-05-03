@@ -85,3 +85,92 @@ def test_agents_property_preserves_declaration_order() -> None:
         topology={a: Edge(to=(b,)), b: Edge(to=(c,)), c: Edge.terminal()},
     )
     assert group.agents == (a, b, c)
+
+
+# ---------------------------------------------------------------------------
+# topological_tiers — dependency-grouped traversal for parallel sibling dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_topological_tiers_linear_chain_one_node_per_tier() -> None:
+    a, b, c = _agent("a"), _agent("b"), _agent("c")
+    group = AgentGroup(
+        name="chain",
+        topology={a: Edge(to=(b,)), b: Edge(to=(c,)), c: Edge.terminal()},
+    )
+    assert group.topological_tiers() == ((a,), (b,), (c,))
+
+
+def test_topological_tiers_diamond_groups_siblings() -> None:
+    """a -> {b, c} -> d. Tiers: ([a], [b, c], [d])."""
+    a, b, c, d = _agent("a"), _agent("b"), _agent("c"), _agent("d")
+    group = AgentGroup(
+        name="diamond",
+        topology={
+            a: Edge(to=(b, c)),
+            b: Edge(to=(d,)),
+            c: Edge(to=(d,)),
+            d: Edge.terminal(),
+        },
+    )
+    tiers = group.topological_tiers()
+    assert tiers[0] == (a,)
+    assert set(tiers[1]) == {b, c}
+    assert tiers[2] == (d,)
+
+
+def test_topological_tiers_preserves_declaration_order_within_tier() -> None:
+    """Tier members keep topology declaration order — gives a stable contract
+    even though concurrent dispatch makes execution order non-deterministic.
+    """
+    a, b, c, d, e = (_agent(n) for n in "abcde")
+    # b, c, d are all siblings under a; declaration order: b, c, d.
+    group = AgentGroup(
+        name="fan",
+        topology={
+            a: Edge(to=(b, c, d)),
+            b: Edge(to=(e,)),
+            c: Edge(to=(e,)),
+            d: Edge(to=(e,)),
+            e: Edge.terminal(),
+        },
+    )
+    tiers = group.topological_tiers()
+    assert tiers == ((a,), (b, c, d), (e,))
+
+
+def test_topological_tiers_node_only_advances_once_all_deps_seen() -> None:
+    """A node with one shallow + one deep dependency lands in the deeper tier."""
+    a, b, c, d = _agent("a"), _agent("b"), _agent("c"), _agent("d")
+    # a -> b, a -> c, b -> d, c -> d. d depends on b AND c. Both b/c in tier 1.
+    # d only fires in tier 2 — never in tier 1 just because c is ready.
+    group = AgentGroup(
+        name="join",
+        topology={
+            a: Edge(to=(b, c)),
+            b: Edge(to=(d,)),
+            c: Edge(to=(d,)),
+            d: Edge.terminal(),
+        },
+    )
+    tiers = group.topological_tiers()
+    assert tiers[0] == (a,)
+    assert set(tiers[1]) == {b, c}
+    assert tiers[2] == (d,)
+
+
+def test_topological_tiers_disconnected_entries_share_tier_zero() -> None:
+    """Two independent entry nodes both end up in tier 0."""
+    a, b, c, d = _agent("a"), _agent("b"), _agent("c"), _agent("d")
+    group = AgentGroup(
+        name="forest",
+        topology={
+            a: Edge(to=(c,)),
+            b: Edge(to=(d,)),
+            c: Edge.terminal(),
+            d: Edge.terminal(),
+        },
+    )
+    tiers = group.topological_tiers()
+    assert set(tiers[0]) == {a, b}
+    assert set(tiers[1]) == {c, d}

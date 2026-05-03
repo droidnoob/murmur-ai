@@ -12,6 +12,7 @@ they go through ``run_group`` and exercise both fan-out modes:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -804,6 +805,282 @@ async def test_multi_input_two_aggregator_mappers_raises(
             },
         )
         with pytest.raises(TopologyError, match="multiple incoming edges with mappers"):
+            await publisher.run_group(crew, TaskSpec(input="..."))
+    finally:
+        await worker.stop()
+
+
+# ---------------------------------------------------------------------------
+# Tier-parallel sibling dispatch
+# ---------------------------------------------------------------------------
+
+
+def _gated_factory(
+    canned: dict[str, Any],
+    *,
+    barrier: asyncio.Barrier,
+    gated_names: frozenset[str],
+) -> Any:
+    """Per-agent canned outputs whose build for ``gated_names`` waits on a barrier.
+
+    Used to prove that two sibling nodes in one tier dispatch concurrently:
+    each gated build awaits the same barrier. If the runner ran siblings
+    sequentially, the second sibling's build would never start (the first
+    would be blocked at the barrier forever) and the ``run_group`` call
+    would time out.
+    """
+
+    async def build(
+        agent: Agent, _allowed: frozenset[str], _task_id: str
+    ) -> pydantic_ai.Agent[None, Any]:
+        if agent.name in gated_names:
+            await barrier.wait()
+        out = canned.get(agent.name)
+        if out is None:
+            raise ValueError(f"no canned output for {agent.name!r}")
+        return pydantic_ai.Agent(
+            model=TestModel(custom_output_args=out),
+            instructions=agent.instructions,
+            output_type=agent.output_type,
+        )
+
+    return build
+
+
+async def test_run_group_dispatches_tier_siblings_in_parallel(
+    head_agent: Agent,
+    minion_agent: Agent,
+    auditor_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Two sibling nodes in one tier must dispatch concurrently.
+
+    The shared ``asyncio.Barrier(2)`` only releases when both gated builds
+    arrive. A sequential walker would block forever on the first sibling's
+    barrier wait; the test would time out and fail.
+    """
+    barrier = asyncio.Barrier(2)
+    factory = _gated_factory(
+        {
+            head_agent.name: _decomposition().model_dump(),
+            minion_agent.name: _finding().model_dump(),
+            auditor_agent.name: _finding().model_dump(),
+            summary_agent.name: _final().model_dump(),
+        },
+        barrier=barrier,
+        gated_names=frozenset({minion_agent.name, auditor_agent.name}),
+    )
+    publisher, worker = await _wire_multi(
+        head_agent, minion_agent, auditor_agent, summary_agent, factory=factory
+    )
+
+    def aggregator(_inputs):  # noqa: ANN001
+        return TaskSpec(input="aggregated")
+
+    try:
+        crew = AgentGroup(
+            name="parallel-siblings",
+            topology={
+                head_agent: (
+                    Edge(to=(minion_agent,), mapper=lambda _: TaskSpec(input="m")),
+                    Edge(to=(auditor_agent,), mapper=lambda _: TaskSpec(input="a")),
+                ),
+                minion_agent: Edge(to=(summary_agent,), mapper=aggregator),
+                auditor_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        async with asyncio.timeout(5):
+            result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        assert result.agent_name == summary_agent.name
+    finally:
+        await worker.stop()
+
+
+async def test_run_group_linear_dag_does_not_invoke_asyncio_gather(
+    monkeypatch: pytest.MonkeyPatch,
+    head_agent: Agent,
+    minion_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Single-agent tiers stay on the sequential fast path.
+
+    Spies on the ``asyncio.gather`` symbol the runner module imports.
+    ``runtime.gather`` (used for fan-out) lives behind the runtime; only
+    the runner's tier-parallel branch calls into the spied symbol, which
+    must never fire on a linear DAG.
+    """
+    from murmur.groups import runner as runner_module
+
+    real_gather = runner_module.asyncio.gather
+    calls: list[int] = []
+
+    async def counting_gather(*aws, **kwargs):
+        calls.append(len(aws))
+        return await real_gather(*aws, **kwargs)
+
+    monkeypatch.setattr(runner_module.asyncio, "gather", counting_gather)
+
+    publisher, worker = await _wire(head_agent, minion_agent, summary_agent)
+    try:
+        crew = AgentGroup(
+            name="linear",
+            topology={
+                head_agent: Edge(to=(minion_agent,)),
+                minion_agent: Edge(
+                    to=(summary_agent,),
+                    mapper=lambda findings: TaskSpec(input=f"sum {len(findings)}"),
+                ),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+        assert calls == [], (
+            "linear DAG should not have invoked the runner's tier-parallel "
+            f"asyncio.gather (calls={calls})"
+        )
+    finally:
+        await worker.stop()
+
+
+async def test_run_group_sibling_ancestors_only_contain_run_group_parent(
+    head_agent: Agent,
+    minion_agent: Agent,
+    auditor_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """Two siblings in one tier must each see only the run_group's parent
+    frame (or empty) in ``ancestors`` — never each other.
+
+    Mirrors ``test_sibling_runs_do_not_see_each_other_as_ancestors`` from
+    ``tests/test_runtime_cascading.py`` but exercises the run_group walker
+    rather than direct ``runtime.run`` calls. ``asyncio.gather`` forks the
+    parent task's contextvars at task creation, so each sibling reads the
+    same parent ``_SpawnFrame`` independently.
+    """
+    from murmur.runtime import _current_spawn, _SpawnFrame
+    from murmur.types import AgentContext
+
+    factory = _multi_input_factory(
+        {
+            head_agent.name: _decomposition().model_dump(),
+            minion_agent.name: _finding().model_dump(),
+            auditor_agent.name: _finding().model_dump(),
+            summary_agent.name: _final().model_dump(),
+        }
+    )
+    publisher, worker = await _wire_multi(
+        head_agent, minion_agent, auditor_agent, summary_agent, factory=factory
+    )
+
+    captured: dict[str, AgentContext] = {}
+
+    real_run = publisher.run
+
+    async def capturing_run(agent_or_name, task_spec):  # noqa: ANN001
+        # Snapshot the parent frame at the moment runtime.run is entered.
+        # The runtime derives the child AgentContext from this frame, so
+        # capturing it here matches what the dispatch will see.
+        frame = _current_spawn.get()
+        if frame is not None:
+            ctx = AgentContext(
+                depth=frame.agent_context.depth + 1,
+                parent_agent=frame.agent_name,
+                parent_trace_id=frame.trace_id,
+                ancestors=frame.agent_context.ancestors | {frame.agent_name},
+            )
+        else:
+            ctx = AgentContext()
+        # The agent here is always an Agent instance in run_group.
+        captured[agent_or_name.name] = ctx
+        return await real_run(agent_or_name, task_spec)
+
+    publisher.run = capturing_run  # ty: ignore[invalid-assignment]  # test seam
+
+    parent_frame = _SpawnFrame(
+        agent_name="orchestrator",
+        agent_context=AgentContext(),
+        trace_id="t-orch",
+    )
+    token = _current_spawn.set(parent_frame)
+
+    def aggregator(_inputs):  # noqa: ANN001
+        return TaskSpec(input="aggregated")
+
+    try:
+        crew = AgentGroup(
+            name="sibling-ancestors",
+            topology={
+                head_agent: (
+                    Edge(to=(minion_agent,), mapper=lambda _: TaskSpec(input="m")),
+                    Edge(to=(auditor_agent,), mapper=lambda _: TaskSpec(input="a")),
+                ),
+                minion_agent: Edge(to=(summary_agent,), mapper=aggregator),
+                auditor_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        result = await publisher.run_group(crew, TaskSpec(input="..."))
+        assert result.is_ok()
+    finally:
+        _current_spawn.reset(token)
+        await worker.stop()
+
+    # Both siblings must see only the orchestrator on the chain — never
+    # each other. Equivalent invariant to the cascading-spawn sibling
+    # isolation test, but proven through the run_group walker.
+    assert captured[minion_agent.name].ancestors == frozenset({"orchestrator"})
+    assert captured[auditor_agent.name].ancestors == frozenset({"orchestrator"})
+    assert captured[minion_agent.name].parent_agent == "orchestrator"
+    assert captured[auditor_agent.name].parent_agent == "orchestrator"
+
+
+async def test_run_group_dispatcher_failure_aborts_run(
+    head_agent: Agent,
+    minion_agent: Agent,
+    auditor_agent: Agent,
+    summary_agent: Agent,
+) -> None:
+    """When one sibling's dispatcher raises (here: condition predicate),
+    the whole run_group raises — gather propagates the first exception.
+    """
+    factory = _multi_input_factory(
+        {
+            head_agent.name: _decomposition().model_dump(),
+            minion_agent.name: _finding().model_dump(),
+            auditor_agent.name: _finding().model_dump(),
+            summary_agent.name: _final().model_dump(),
+        }
+    )
+    publisher, worker = await _wire_multi(
+        head_agent, minion_agent, auditor_agent, summary_agent, factory=factory
+    )
+
+    def boom(_out):  # noqa: ANN001
+        raise ValueError("nope")
+
+    try:
+        crew = AgentGroup(
+            name="sibling-dispatch-failure",
+            topology={
+                head_agent: (
+                    Edge(to=(minion_agent,), mapper=lambda _: TaskSpec(input="m")),
+                    Edge(
+                        to=(auditor_agent,),
+                        mapper=lambda _: TaskSpec(input="a"),
+                        condition=boom,
+                    ),
+                ),
+                minion_agent: Edge(
+                    to=(summary_agent,), mapper=lambda _: TaskSpec(input="agg")
+                ),
+                auditor_agent: Edge(to=(summary_agent,)),
+                summary_agent: Edge.terminal(),
+            },
+        )
+        with pytest.raises(TopologyError, match="research-head.*auditor"):
             await publisher.run_group(crew, TaskSpec(input="..."))
     finally:
         await worker.stop()

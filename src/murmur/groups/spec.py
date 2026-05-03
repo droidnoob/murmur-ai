@@ -155,6 +155,42 @@ class AgentGroup:
             raise TopologyError(f"AgentGroup {self.name!r} topology has a cycle")
         return tuple(order)
 
+    def topological_tiers(self) -> tuple[tuple[Agent, ...], ...]:
+        """Topological order grouped into dependency tiers.
+
+        Each tier contains nodes whose dependencies are all in earlier
+        tiers. Within one tier the nodes are pairwise independent and
+        therefore safe to dispatch in parallel. Tier order across the
+        result preserves the DAG's dependency direction — tier ``i+1``
+        is only reachable once every node in tier ``i`` has produced
+        a result. Topology declaration order is preserved within each
+        tier so the contract is "results stored, terminal returned"
+        rather than "node X ran before node Y".
+        """
+        indeg: dict[Agent, int] = dict.fromkeys(self.topology, 0)
+        for src in self.topology:
+            for edge in self.outgoing_edges(src):
+                for tgt in edge.to:
+                    indeg[tgt] = indeg.get(tgt, 0) + 1
+        tiers: list[tuple[Agent, ...]] = []
+        ready: list[Agent] = [a for a in self.topology if indeg[a] == 0]
+        seen = 0
+        while ready:
+            tier = tuple(ready)
+            tiers.append(tier)
+            seen += len(tier)
+            next_ready: list[Agent] = []
+            for node in tier:
+                for edge in self.outgoing_edges(node):
+                    for tgt in edge.to:
+                        indeg[tgt] -= 1
+                        if indeg[tgt] == 0:
+                            next_ready.append(tgt)
+            ready = next_ready
+        if seen != len(self.topology):  # pragma: no cover — caught by _has_cycle
+            raise TopologyError(f"AgentGroup {self.name!r} topology has a cycle")
+        return tuple(tiers)
+
     def _has_cycle(self) -> bool:
         white: set[Agent] = set(self.topology.keys())
         gray: set[Agent] = set()
