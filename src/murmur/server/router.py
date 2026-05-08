@@ -159,17 +159,18 @@ class AgentRouter(APIRouter):
 FastStreamBroker` (the ``_fs_broker=`` constructor seam).
         """
         # Lazy imports — keep module load lean and avoid circulars.
-        from murmur.backends._faststream_broker import FastStreamBroker
         from murmur.backends.job import JobBackend
 
         runtime = self._server.runtime
         backend = runtime.backend
         if not isinstance(backend, JobBackend):
             return None
+        # The four FastStream concretes all expose ``fs_broker`` (via the
+        # shared ``_FastStreamSchemeMixin``); the in-memory broker doesn't.
+        # ``getattr`` with a default keeps this scheme-agnostic — if a
+        # future broker concrete also exposes ``fs_broker``, we surface it.
         inner_broker = getattr(backend, "broker", None)
-        if isinstance(inner_broker, FastStreamBroker):
-            return inner_broker.fs_broker
-        return None
+        return getattr(inner_broker, "fs_broker", None)
 
     # ------------------------------------------------------------------ lifespan
 

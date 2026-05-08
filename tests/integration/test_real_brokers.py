@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends._faststream_broker import FastStreamBroker
+from murmur.backends._faststream_broker import FastStreamBroker, FastStreamBrokerType
 from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.runtime import AgentRuntime
@@ -108,7 +108,7 @@ def _agent() -> Agent:
 # ---------------------------------------------------------------------------
 
 
-async def _round_trip(broker: FastStreamBroker) -> None:
+async def _round_trip(broker: FastStreamBrokerType) -> None:
     """Single agent run from publisher → broker → worker → publisher."""
     agent = _agent()
     publisher = AgentRuntime(broker_instance=broker, runtime_id="rt-real")
@@ -129,7 +129,7 @@ async def _round_trip(broker: FastStreamBroker) -> None:
 
 
 @pytest.fixture
-async def kafka_broker() -> AsyncIterator[FastStreamBroker]:
+async def kafka_broker() -> AsyncIterator[FastStreamBrokerType]:
     """Kafka container. Note: requires ``docker pull confluentinc/cp-kafka:7.6.0``
     (~1GB) on first run — testcontainers will pull automatically when
     available, but a reliable CI run should warm the local cache."""
@@ -144,7 +144,7 @@ async def kafka_broker() -> AsyncIterator[FastStreamBroker]:
 
 
 @pytest.fixture
-async def nats_broker() -> AsyncIterator[FastStreamBroker]:
+async def nats_broker() -> AsyncIterator[FastStreamBrokerType]:
     from testcontainers.nats import NatsContainer
 
     with NatsContainer() as container:
@@ -154,7 +154,7 @@ async def nats_broker() -> AsyncIterator[FastStreamBroker]:
 
 
 @pytest.fixture
-async def rabbit_broker() -> AsyncIterator[FastStreamBroker]:
+async def rabbit_broker() -> AsyncIterator[FastStreamBrokerType]:
     """RabbitMQ container — pinned to 3.12 because newer RabbitMQ rejects
     ``transient_nonexcl_queues`` by default and FastStream's ``pika``-driven
     AMQP client trips that deprecation. Fix forward when FastStream's
@@ -170,7 +170,7 @@ async def rabbit_broker() -> AsyncIterator[FastStreamBroker]:
 
 
 @pytest.fixture
-async def redis_broker() -> AsyncIterator[FastStreamBroker]:
+async def redis_broker() -> AsyncIterator[FastStreamBrokerType]:
     from testcontainers.redis import RedisContainer
 
     with RedisContainer() as container:
@@ -186,24 +186,24 @@ async def redis_broker() -> AsyncIterator[FastStreamBroker]:
 # ---------------------------------------------------------------------------
 
 
-async def test_kafka_round_trip(kafka_broker: FastStreamBroker) -> None:
+async def test_kafka_round_trip(kafka_broker: FastStreamBrokerType) -> None:
     await _round_trip(kafka_broker)
 
 
-async def test_nats_round_trip(nats_broker: FastStreamBroker) -> None:
+async def test_nats_round_trip(nats_broker: FastStreamBrokerType) -> None:
     await _round_trip(nats_broker)
 
 
-async def test_rabbitmq_round_trip(rabbit_broker: FastStreamBroker) -> None:
+async def test_rabbitmq_round_trip(rabbit_broker: FastStreamBrokerType) -> None:
     await _round_trip(rabbit_broker)
 
 
-async def test_redis_round_trip(redis_broker: FastStreamBroker) -> None:
+async def test_redis_round_trip(redis_broker: FastStreamBrokerType) -> None:
     await _round_trip(redis_broker)
 
 
 async def test_redis_multi_worker_competing_consumer(
-    redis_broker: FastStreamBroker,
+    redis_broker: FastStreamBrokerType,
 ) -> None:
     """Multiple Workers on the same Redis URL must compete for tasks, not
     broadcast. Regression for the bug where every Worker received every
@@ -256,7 +256,7 @@ async def test_redis_multi_worker_competing_consumer(
 
 
 async def test_redis_stable_consumer_id_bounds_xinfo_groups(
-    redis_broker: FastStreamBroker,
+    redis_broker: FastStreamBrokerType,
 ) -> None:
     """Repeated Worker start/stop cycles with a stable ``consumer_id``
     do not grow the consumer roster on the Redis Streams group.
@@ -309,7 +309,7 @@ async def test_redis_stable_consumer_id_bounds_xinfo_groups(
 
 
 async def test_redis_uuid_consumer_id_leaks_xinfo_groups(
-    redis_broker: FastStreamBroker,
+    redis_broker: FastStreamBrokerType,
 ) -> None:
     """Mirror of the stable-id test — proves the contract bites both
     ways. Three Worker churns each minting a fresh ``consumer_id``

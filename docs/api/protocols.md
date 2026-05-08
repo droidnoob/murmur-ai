@@ -224,10 +224,21 @@ domain operations (route, resolve context, dispatch).
 
 ### `Broker`
 
-The message-bus abstraction backing `JobBackend`. Concrete:
-`FastStreamBroker` (a thin wrapper over `KafkaBroker`/`NatsBroker`/
-`RabbitBroker`/`RedisBroker`) and `InMemoryBroker` (in-process,
-`memory://` URLs, used in tests).
+The message-bus abstraction backing `JobBackend`. Concretes:
+
+- `FastStreamRedisBroker` — Redis Streams; first-class `consumer_id`,
+  `prefetch`, and `group` support.
+- `FastStreamKafkaBroker` — Kafka with consumer `group_id`.
+- `FastStreamNatsBroker` — NATS queue groups.
+- `FastStreamRabbitBroker` — RabbitMQ named queues (competing-consumer
+  by default).
+- `InMemoryBroker` — in-process round-robin, `memory://` URLs, used in
+  tests.
+
+Production code routes through the URL-keyed factory at
+`AgentRuntime(broker="redis://…")` and stays scheme-agnostic; the per-
+scheme classes are importable directly when an integration test needs
+the explicit type.
 
 ::: murmur.core.protocols.Broker
     options:

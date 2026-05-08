@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from murmur.backends._faststream_broker import FastStreamBroker
+from murmur.backends._faststream_broker import FastStreamBroker, FastStreamBrokerType
 
 # ---------------------------------------------------------------------------
 # Per-scheme factories: (scheme, url, broker_ctor, test_broker_ctor).
@@ -73,7 +73,7 @@ _FACTORIES: list[
 
 
 @pytest.fixture(params=_FACTORIES, ids=["kafka", "nats", "amqp"])
-async def broker(request: pytest.FixtureRequest) -> AsyncIterator[FastStreamBroker]:
+async def broker(request: pytest.FixtureRequest) -> AsyncIterator[FastStreamBrokerType]:
     scheme, url, broker_ctor, test_ctor = request.param()
     fs_broker = broker_ctor()
     async with test_ctor(fs_broker):
@@ -90,7 +90,7 @@ async def broker(request: pytest.FixtureRequest) -> AsyncIterator[FastStreamBrok
 # ---------------------------------------------------------------------------
 
 
-async def test_publish_subscribe_round_trip(broker: FastStreamBroker) -> None:
+async def test_publish_subscribe_round_trip(broker: FastStreamBrokerType) -> None:
     received: list[bytes] = []
 
     async def handler(msg: bytes) -> None:
@@ -102,7 +102,7 @@ async def test_publish_subscribe_round_trip(broker: FastStreamBroker) -> None:
     assert received == [b"hello"]
 
 
-async def test_separate_topics_dont_cross(broker: FastStreamBroker) -> None:
+async def test_separate_topics_dont_cross(broker: FastStreamBrokerType) -> None:
     a_msgs: list[bytes] = []
     b_msgs: list[bytes] = []
 
@@ -145,6 +145,6 @@ def test_unsupported_scheme_rejected() -> None:
         FastStreamBroker(scheme="ftp", url="ftp://example.com")
 
 
-async def test_stop_is_idempotent(broker: FastStreamBroker) -> None:
+async def test_stop_is_idempotent(broker: FastStreamBrokerType) -> None:
     await broker.stop()
     await broker.stop()  # must not raise
