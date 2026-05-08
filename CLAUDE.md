@@ -657,6 +657,25 @@ class AgentResult(BaseModel, Generic[T]):
 - `# ty: ignore[<rule-name>]` only — never bare `# type: ignore`. Always include rule name and reason.
 - `Any` requires an inline comment explaining why.
 
+### `typing.cast` — avoid where possible
+
+`cast` is a runtime no-op that asserts to the type checker without proving anything. Each `cast` is a place the type system stops helping. Default to **not using it**.
+
+When tempted, the right move is almost always one of:
+
+- **Narrow at a parser boundary** — write `parse_X(s: str) -> Literal[...] | None` returning `None` for invalid inputs, instead of `cast(Literal[...], s)` after a runtime `if s in {...}` check.
+- **Return a precise type** — if the call site needs `cast(SomeShape, result)`, the function's return type is too loose. Make it a Pydantic `BaseModel`, `TypedDict`, or named dataclass. (Pydantic models also work as FastAPI response models out of the box; `TypedDict` trips on `from __future__ import annotations`.)
+- **Use runtime constructors as narrowing** — `str(x)`, `int(x)`, `json.loads(x)` double as type narrowing for DB rows or external payloads.
+- **Type the variable correctly upfront** — don't build a `list[object]` and cast at the boundary; type it `list[Foo]` from the start.
+
+Reserve `cast` only for genuine untyped boundaries — and add a comment naming the boundary:
+- DB drivers returning `Any` (sqlite3 row tuples, redis-py replies)
+- Framework callback types loosely typed by the framework (e.g. Starlette `call_next`)
+- Stdlib quirks like `MappingProxyType` not advertising `Mapping`
+- Sanctioned access to a `_private` attribute already typed `Any`
+
+If a cast doesn't fit one of those categories, find the real fix.
+
 ---
 
 ## 13. SOLID, DRY, YAGNI
