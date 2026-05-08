@@ -305,5 +305,15 @@ class Agent(BaseModel):
         """Return a copy with the given fields replaced — the only mutation path."""
         return self.model_copy(update=updates)
 
+    def __hash__(self) -> int:
+        # Hash on ``name`` only — the canonical agent identity used by the
+        # registry, cycle detection, and broker topics. Pydantic's frozen-model
+        # default hashes every field, which fails when ``model`` is a
+        # ``pydantic_ai.models.Model`` instance (HTTP clients, providers, and
+        # custom base URLs aren't hashable). Two agents with the same name but
+        # different fields collide here; that's an acceptable hash collision —
+        # ``__eq__`` (still field-level via Pydantic) disambiguates.
+        return hash(self.name)
+
 
 __all__ = ["Agent", "ProcessHook"]

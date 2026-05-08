@@ -23,6 +23,7 @@ tests (testcontainers) land separately.
 from __future__ import annotations
 
 import contextlib
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from murmur.core.errors import SpecValidationError
@@ -122,15 +123,110 @@ class FastStreamBroker:
     async def publish(self, topic: str, payload: bytes) -> None:
         if not self._started or self._fs_broker is None:
             raise RuntimeError("FastStreamBroker.publish called before start()")
+        # Redis: publish to a Stream rather than a Pub/Sub channel so the
+        # message persists and consumer groups (the competing-consumer
+        # path used by Worker fleets) can claim it. Channels would silently
+        # drop messages whose subscribers happen to be on Streams. Other
+        # schemes — Kafka topics, NATS subjects, RabbitMQ queues — already
+        # share one namespace between publish and subscribe.
+        if self._scheme == "redis":
+            await self._fs_broker.publish(payload, stream=topic)
+            return
         await self._fs_broker.publish(payload, topic)
 
-    async def subscribe(self, topic: str, handler: MessageHandler) -> None:
+    async def subscribe(
+        self,
+        topic: str,
+        handler: MessageHandler,
+        *,
+        group: str | None = None,
+        prefetch: int | None = None,
+    ) -> None:
         if not self._started or self._fs_broker is None:
             raise RuntimeError("FastStreamBroker.subscribe called before start()")
-        sub = self._fs_broker.subscriber(topic)
+        sub = self._build_subscriber(topic, group, prefetch)
         sub(_wrap_handler(handler))
         await sub.start()
         self._subscriptions.append(sub)
+
+    def _build_subscriber(
+        self, topic: str, group: str | None, prefetch: int | None
+    ) -> Any:
+        """Construct a FastStream subscriber matching ``group`` semantics.
+
+        ``group=None`` keeps the per-broker default (Pub/Sub channel for
+        Redis, fresh consumer group per process for Kafka, no queue group
+        for NATS, anonymous queue for RabbitMQ — all broadcast-flavoured).
+
+        ``group=<str>`` forces competing-consumer semantics so multiple
+        subscribers sharing a ``(topic, group)`` pair pool one queue and
+        each message is delivered to exactly one of them. The mapping
+        differs by broker — Redis uses Streams + consumer group, Kafka
+        uses ``group_id``, NATS uses queue groups, RabbitMQ binds a named
+        durable queue to the topic exchange.
+        """
+        broker = self._fs_broker
+        assert broker is not None  # checked by caller
+        # Redis is special: publish goes to a Stream (see ``publish``), so
+        # both branches here must subscribe to the same Stream namespace.
+        # Without a group, each subscriber reads the whole stream (broadcast
+        # — used for runtime-id-scoped reply topics that only ever have
+        # one subscriber anyway). With a group, FastStream wires a Redis
+        # Streams consumer group so multiple subscribers compete.
+        # ``prefetch`` caps how many messages this subscriber claims per
+        # poll. Lower values give tighter fan-out fairness across a Worker
+        # fleet at the cost of more broker round-trips; higher values
+        # favour throughput. The per-scheme knob differs but the intent
+        # is the same.
+        if self._scheme == "redis":
+            from faststream.redis import StreamSub
+
+            if group is None:
+                stream = (
+                    StreamSub(topic, max_records=prefetch)
+                    if prefetch is not None
+                    else StreamSub(topic)
+                )
+                return broker.subscriber(stream=stream)
+            # Consumer name must be unique per subscriber inside the group;
+            # the group itself is shared across the fleet.
+            return broker.subscriber(
+                stream=StreamSub(
+                    topic,
+                    group=group,
+                    consumer=uuid.uuid4().hex,
+                    max_records=prefetch,
+                ),
+            )
+
+        if self._scheme == "kafka":
+            kwargs: dict[str, Any] = {}
+            if group is not None:
+                kwargs["group_id"] = group
+            if prefetch is not None:
+                kwargs["max_records"] = prefetch
+            return broker.subscriber(topic, **kwargs)
+        if self._scheme == "nats":
+            kwargs = {}
+            if group is not None:
+                kwargs["queue"] = group
+            if prefetch is not None:
+                kwargs["pending_msgs_limit"] = prefetch
+            return broker.subscriber(topic, **kwargs)
+        # RabbitMQ: ``broker.subscriber(topic)`` declares a queue named
+        # ``topic`` and binds it to the default exchange — multiple
+        # consumers attaching to that same queue compete for messages
+        # natively (AMQP basic.consume). The ``group`` parameter has no
+        # additional effect beyond what the default already provides;
+        # ``prefetch`` flows through ``consume_args`` as the channel's
+        # ``prefetch_count`` (basic.qos). Rabbit is therefore *always*
+        # competing-consumer in this wrapper, which is fine — every
+        # broadcast use (reply topic, events relay) is per-runtime-id
+        # and only ever has one subscriber.
+        kwargs = {}
+        if prefetch is not None:
+            kwargs["consume_args"] = {"prefetch_count": prefetch}
+        return broker.subscriber(topic, **kwargs)
 
     # ------------------------------------------------------------------ helpers
 

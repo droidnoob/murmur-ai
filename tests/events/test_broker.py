@@ -151,7 +151,14 @@ class _ExplodingBroker:
     async def publish(self, topic: str, payload: bytes) -> None:
         raise RuntimeError("broker is on fire")
 
-    async def subscribe(self, topic: str, handler: Any) -> None:  # pragma: no cover
+    async def subscribe(
+        self,
+        topic: str,
+        handler: Any,
+        *,
+        group: str | None = None,
+        prefetch: int | None = None,
+    ) -> None:  # pragma: no cover
         return None
 
 

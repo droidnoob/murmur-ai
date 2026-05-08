@@ -200,3 +200,56 @@ async def test_rabbitmq_round_trip(rabbit_broker: FastStreamBroker) -> None:
 
 async def test_redis_round_trip(redis_broker: FastStreamBroker) -> None:
     await _round_trip(redis_broker)
+
+
+async def test_redis_multi_worker_competing_consumer(
+    redis_broker: FastStreamBroker,
+) -> None:
+    """Multiple Workers on the same Redis URL must compete for tasks, not
+    broadcast. Regression for the bug where every Worker received every
+    TaskMessage — tripled LLM cost and orphan results on the publisher.
+
+    Spins up three Workers attached to the same broker, fans 12 tasks via
+    ``runtime.gather``, and asserts every task lands in exactly one Worker
+    with no duplicates.
+    """
+    agent = _agent()
+    publisher = AgentRuntime(broker_instance=redis_broker, runtime_id="rt-multi")
+    workers = [
+        Worker(
+            broker=redis_broker,
+            agents={agent.name: agent},
+            runtime=_worker_runtime(),
+            concurrency=4,
+        )
+        for _ in range(3)
+    ]
+    seen: dict[int, list[str]] = {i: [] for i in range(len(workers))}
+    for i, w in enumerate(workers):
+        # late-binding the index into the closure
+        @w.on_task_complete
+        async def _record(
+            task_id: str, _agent_name: str, _duration_ms: int, _i: int = i
+        ) -> None:
+            seen[_i].append(task_id)
+
+        await w.start()
+
+    try:
+        results = await publisher.gather(
+            agent,
+            [TaskSpec(input=f"task-{n}") for n in range(12)],
+            max_concurrency=12,
+        )
+    finally:
+        for w in workers:
+            await w.stop()
+
+    assert all(r.is_ok() for r in results)
+    assert len(results) == 12
+    # Every task_id appears in exactly one Worker's bucket — no broadcast.
+    flat = [tid for bucket in seen.values() for tid in bucket]
+    assert len(flat) == 12
+    assert len(set(flat)) == 12
+    # And every Worker handled at least one task — load actually distributed.
+    assert all(len(b) > 0 for b in seen.values()), seen

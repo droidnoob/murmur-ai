@@ -145,21 +145,17 @@ def _rabbit() -> tuple[str, str, Callable[[], Any], Callable[[Any], Any]]:
     )
 
 
-def _redis() -> tuple[str, str, Callable[[], Any], Callable[[Any], Any]]:
-    from faststream.redis import RedisBroker, TestRedisBroker
-
-    return (
-        "redis",
-        "redis://localhost:6379",
-        lambda: RedisBroker("redis://localhost:6379"),
-        TestRedisBroker,
-    )
-
-
-_FACTORIES = [_kafka, _nats, _rabbit, _redis]
+# NB: Redis is intentionally absent from this in-memory ``TestBroker``
+# parametrize set. Worker subscriptions go through Redis Streams + consumer
+# groups (see ``FastStreamBroker._build_subscriber``) so the fleet competes
+# for tasks instead of broadcasting; FastStream's ``TestRedisBroker`` mocks
+# the redis client with ``MagicMock``, which can't await ``xgroup_create``.
+# Real-Redis coverage lives in ``test_real_brokers.py::test_redis_*`` —
+# those use ``testcontainers`` against an actual server.
+_FACTORIES = [_kafka, _nats, _rabbit]
 
 
-@pytest.fixture(params=_FACTORIES, ids=["kafka", "nats", "amqp", "redis"])
+@pytest.fixture(params=_FACTORIES, ids=["kafka", "nats", "amqp"])
 async def pipeline(
     request: pytest.FixtureRequest,
 ) -> AsyncIterator[tuple[AgentRuntime, AgentGroup]]:
