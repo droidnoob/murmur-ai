@@ -25,10 +25,23 @@ log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 
 class InMemoryBroker:
-    """Asyncio pub/sub. Satisfies :class:`murmur.core.protocols.Broker`."""
+    """Asyncio pub/sub. Satisfies :class:`murmur.core.protocols.Broker`.
+
+    Supports both broadcast (``group=None``) and competing-consumer
+    (``group=<str>``) delivery — see the Protocol docstring. Competing-
+    consumer pools route each message to exactly one handler via round-robin
+    over the pool's registration order, so multiple Workers serving the same
+    agent split work instead of duplicating it.
+    """
 
     def __init__(self) -> None:
-        self._subscribers: dict[str, list[MessageHandler]] = defaultdict(list)
+        self._broadcast: dict[str, list[MessageHandler]] = defaultdict(list)
+        # ``_groups[topic][group]`` is the ordered list of handlers in that
+        # competing-consumer pool, plus a round-robin cursor sitting next to
+        # it. Keeping cursor and handlers in lockstep keeps ``publish``
+        # branch-free.
+        self._groups: dict[str, dict[str, list[MessageHandler]]] = defaultdict(dict)
+        self._cursors: dict[tuple[str, str], int] = {}
         self._started: bool = False
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -44,19 +57,42 @@ class InMemoryBroker:
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         self._tasks.clear()
-        self._subscribers.clear()
+        self._broadcast.clear()
+        self._groups.clear()
+        self._cursors.clear()
 
     async def publish(self, topic: str, payload: bytes) -> None:
         if not self._started:
             raise RuntimeError("InMemoryBroker.publish called before start()")
-        handlers = list(self._subscribers.get(topic, ()))
-        for handler in handlers:
-            task = asyncio.create_task(self._dispatch(handler, payload))
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+        # Broadcast subscribers — every handler sees the message.
+        for handler in list(self._broadcast.get(topic, ())):
+            self._spawn(handler, payload)
+        # Competing-consumer pools — each pool delivers to exactly one
+        # handler, picked round-robin so a fleet of Workers shares load.
+        for group, handlers in self._groups.get(topic, {}).items():
+            if not handlers:
+                continue
+            key = (topic, group)
+            idx = self._cursors.get(key, 0) % len(handlers)
+            self._cursors[key] = idx + 1
+            self._spawn(handlers[idx], payload)
 
-    async def subscribe(self, topic: str, handler: MessageHandler) -> None:
-        self._subscribers[topic].append(handler)
+    async def subscribe(
+        self,
+        topic: str,
+        handler: MessageHandler,
+        *,
+        group: str | None = None,
+    ) -> None:
+        if group is None:
+            self._broadcast[topic].append(handler)
+            return
+        self._groups[topic].setdefault(group, []).append(handler)
+
+    def _spawn(self, handler: MessageHandler, payload: bytes) -> None:
+        task = asyncio.create_task(self._dispatch(handler, payload))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     @staticmethod
     async def _dispatch(handler: MessageHandler, payload: bytes) -> None:

@@ -57,28 +57,22 @@ def _rabbit() -> tuple[str, str, Callable[[], Any], Callable[[Any], Any]]:
     )
 
 
-def _redis() -> tuple[str, str, Callable[[], Any], Callable[[Any], Any]]:
-    from faststream.redis import RedisBroker, TestRedisBroker
-
-    return (
-        "redis",
-        "redis://localhost:6379",
-        lambda: RedisBroker("redis://localhost:6379"),
-        TestRedisBroker,
-    )
-
-
+# NB: Redis is intentionally absent from this in-memory ``TestBroker``
+# parametrize set. The wrapper publishes Redis tasks via Streams (so consumer
+# groups can claim them), but FastStream's ``TestRedisBroker`` mocks the
+# redis client with ``MagicMock`` — ``await client.xadd(...)`` returns a
+# non-awaitable mock and the subscriber's ``xgroup_create`` blocks on the
+# same. Real-Redis coverage lives in ``tests/integration/test_real_brokers.py``.
 _FACTORIES: list[
     Callable[[], tuple[str, str, Callable[[], Any], Callable[[Any], Any]]]
 ] = [
     _kafka,
     _nats,
     _rabbit,
-    _redis,
 ]
 
 
-@pytest.fixture(params=_FACTORIES, ids=["kafka", "nats", "amqp", "redis"])
+@pytest.fixture(params=_FACTORIES, ids=["kafka", "nats", "amqp"])
 async def broker(request: pytest.FixtureRequest) -> AsyncIterator[FastStreamBroker]:
     scheme, url, broker_ctor, test_ctor = request.param()
     fs_broker = broker_ctor()

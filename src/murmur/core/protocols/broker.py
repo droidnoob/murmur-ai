@@ -40,12 +40,33 @@ class Broker(Protocol):
         """Publish ``payload`` to ``topic``. Does not wait for delivery."""
         ...
 
-    async def subscribe(self, topic: str, handler: MessageHandler) -> None:
+    async def subscribe(
+        self,
+        topic: str,
+        handler: MessageHandler,
+        *,
+        group: str | None = None,
+    ) -> None:
         """Register ``handler`` for messages on ``topic``.
 
-        Multiple handlers per topic are allowed. Subscriptions persist until
-        :meth:`stop` is called — there is no per-subscription unsubscribe in
-        this Protocol; restart the broker if you need to fully reset.
+        Two delivery semantics, picked via ``group``:
+
+        - ``group=None`` (default) — **broadcast / pub-sub**. Every subscriber
+          on the topic receives every message. Used for runtime-id-scoped
+          reply topics (only ever one subscriber anyway) and event-stream
+          observers that all want the same payload.
+        - ``group=<str>`` — **competing-consumer**. All subscribers that
+          share the same ``(topic, group)`` pair are pooled, and each
+          published message is delivered to exactly one of them. Used by
+          :class:`murmur.worker.Worker` so multiple workers serving the same
+          agent split the workload instead of duplicating it. Per-broker
+          mapping: Redis Streams consumer group, Kafka consumer ``group_id``,
+          NATS queue group, a named RabbitMQ queue.
+
+        Multiple handlers per topic are allowed regardless of mode.
+        Subscriptions persist until :meth:`stop` is called — there is no
+        per-subscription unsubscribe in this Protocol; restart the broker
+        if you need to fully reset.
         """
         ...
 

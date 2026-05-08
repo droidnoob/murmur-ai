@@ -103,6 +103,34 @@ broker, runtime id, agents, per-agent topics, and concurrency. The
 banner uses `sys.stderr` directly so the layout survives structlog
 rendering.
 
+## Scaling out — multiple workers compete for tasks
+
+Pointing several `Worker` processes at the same broker URL gives you
+horizontal fan-out: each `TaskMessage` is delivered to **exactly one**
+worker in the fleet, not broadcast to all of them. Concretely, each
+worker subscribes through its broker's competing-consumer primitive —
+Redis Streams consumer group, Kafka consumer `group_id`, NATS queue
+group, or a shared RabbitMQ queue — keyed by the agent's task topic.
+The key is identical across every Worker serving the same agent, so the
+broker pools them automatically; spinning up another process is the
+only knob you need to turn.
+
+```python
+# Three workers, same broker, same agents — the broker load-balances.
+for _ in range(3):
+    Worker(
+        broker=broker,
+        agents={"researcher": researcher},
+        concurrency=4,
+    ).start()
+```
+
+Per-Worker `concurrency=` still caps how many tasks one process pulls
+in parallel; effective fleet parallelism is `num_workers × concurrency`.
+A worker process that dies mid-task is recovered by the broker's
+redelivery semantics — another worker eventually picks the task up
+(the agent author owns idempotency).
+
 ## Lifecycle hooks
 
 ```python

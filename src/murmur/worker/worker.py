@@ -156,7 +156,15 @@ class Worker:
         subscriptions: dict[str, str] = {}
         for agent_name in self._agents:
             topic = task_topic(agent_name)
-            await self._broker.subscribe(topic, self._make_handler(agent_name))
+            # ``group=topic`` puts every Worker serving this agent into one
+            # competing-consumer pool — each TaskMessage is delivered to
+            # exactly one Worker rather than fanned out to all of them.
+            # Without the group, Redis pub-sub / per-process Kafka groups /
+            # NATS without queue groups all broadcast, which triples LLM
+            # cost and produces orphan results on the publisher.
+            await self._broker.subscribe(
+                topic, self._make_handler(agent_name), group=topic
+            )
             subscriptions[agent_name] = topic
         self._started = True
 
