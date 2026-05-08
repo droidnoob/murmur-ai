@@ -1,0 +1,154 @@
+/* Murmur Dashboard — Design Tokens */
+
+:root {
+  /* Type */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* === DARK MODE (primary) === */
+  /* Surfaces */
+  --bg-base:    #0a0a0c;       /* page bg */
+  --bg-surface: #111114;       /* cards, panels */
+  --bg-raised:  #16161b;       /* nested cards, header */
+  --bg-hover:   #1c1c22;       /* row hover */
+  --bg-active:  #232329;       /* selected/active */
+  --bg-input:   #0e0e12;
+
+  /* Borders */
+  --border-subtle: #1f1f25;    /* divider lines */
+  --border-default: #2a2a32;   /* card borders */
+  --border-strong: #3a3a44;    /* emphasized */
+  --border-focus: #7c3aed;
+
+  /* Text */
+  --text-primary:   #e8e8ed;
+  --text-secondary: #a1a1ab;
+  --text-tertiary:  #6b6b76;
+  --text-muted:     #4a4a54;
+  --text-inverse:   #0a0a0c;
+
+  /* Accent — Murmur purple */
+  --accent:        #8b5cf6;
+  --accent-hover:  #9d6ff8;
+  --accent-dim:    #6d28d9;
+  --accent-bg:     rgba(139, 92, 246, 0.10);
+  --accent-border: rgba(139, 92, 246, 0.30);
+
+  /* Status (run state) */
+  --status-spawned:    #6b6b76;     /* neutral grey */
+  --status-spawned-bg: rgba(107, 107, 118, 0.12);
+  --status-running:    #3b82f6;     /* blue */
+  --status-running-bg: rgba(59, 130, 246, 0.14);
+  --status-completed:  #22c55e;     /* green */
+  --status-completed-bg: rgba(34, 197, 94, 0.12);
+  --status-failed:     #ef4444;     /* red */
+  --status-failed-bg:  rgba(239, 68, 68, 0.12);
+  --status-rejected:   #f59e0b;     /* amber-orange */
+  --status-rejected-bg: rgba(245, 158, 11, 0.12);
+
+  /* Trust levels */
+  --trust-high:     #22c55e;
+  --trust-high-bg:  rgba(34, 197, 94, 0.12);
+  --trust-medium:   #3b82f6;
+  --trust-medium-bg: rgba(59, 130, 246, 0.12);
+  --trust-low:      #f59e0b;
+  --trust-low-bg:   rgba(245, 158, 11, 0.12);
+  --trust-sandbox:  #a78bfa;
+  --trust-sandbox-bg: rgba(167, 139, 250, 0.12);
+
+  /* Severity */
+  --sev-info:  #6b6b76;
+  --sev-warn:  #f59e0b;
+  --sev-error: #ef4444;
+
+  /* Reject reasons */
+  --reject-cycle:   #a78bfa;       /* purple */
+  --reject-depth:   #fb923c;       /* orange */
+  --reject-cap:     #ef4444;       /* red */
+  --reject-budget:  #ec4899;       /* red-pink */
+  --reject-timeout: #64748b;       /* blue-grey */
+
+  /* Charts */
+  --chart-grid:    #1f1f25;
+  --chart-axis:    #4a4a54;
+  --chart-line-1:  #8b5cf6;
+  --chart-line-2:  #3b82f6;
+  --chart-area:    rgba(139, 92, 246, 0.16);
+
+  /* Shadows (minimal) */
+  --shadow-drawer: 0 0 0 1px var(--border-default), -24px 0 48px rgba(0,0,0,0.5);
+  --shadow-tooltip: 0 4px 16px rgba(0,0,0,0.4), 0 0 0 1px var(--border-default);
+
+  /* Radius */
+  --r-sm: 3px;
+  --r-md: 4px;
+  --r-lg: 6px;
+  --r-pill: 9999px;
+
+  /* Spacing scale (4px base) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+
+  /* Sizes */
+  --row-h: 32px;
+  --row-h-lg: 36px;
+  --header-h: 48px;
+  --tab-h: 40px;
+}
+
+/* === LIGHT MODE === */
+.theme-light {
+  --bg-base:    #fafafa;
+  --bg-surface: #ffffff;
+  --bg-raised:  #ffffff;
+  --bg-hover:   #f4f4f5;
+  --bg-active:  #ececef;
+  --bg-input:   #ffffff;
+
+  --border-subtle: #ececef;
+  --border-default: #d4d4d8;
+  --border-strong: #a1a1aa;
+
+  --text-primary:   #18181b;
+  --text-secondary: #52525b;
+  --text-tertiary:  #71717a;
+  --text-muted:     #a1a1aa;
+  --text-inverse:   #ffffff;
+
+  --accent:        #7c3aed;
+  --accent-hover:  #6d28d9;
+  --accent-bg:     rgba(124, 58, 237, 0.08);
+  --accent-border: rgba(124, 58, 237, 0.30);
+
+  --chart-grid:    #ececef;
+  --chart-axis:    #71717a;
+
+  --shadow-drawer: 0 0 0 1px var(--border-default), -24px 0 48px rgba(0,0,0,0.10);
+}
+
+/* Base reset for dashboard */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono { font-family: var(--font-mono); font-feature-settings: 'zero', 'ss02'; }
+
+/* Scrollbar */
+.dashboard-root ::-webkit-scrollbar { width: 8px; height: 8px; }
+.dashboard-root ::-webkit-scrollbar-track { background: transparent; }
+.dashboard-root ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 4px; }
+.dashboard-root ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
