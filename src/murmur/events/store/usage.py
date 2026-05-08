@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from murmur.events.types import RuntimeEvent
 
-GroupBy = Literal["agent", "trace", "none"]
+GroupBy = Literal["agent", "trace", "model", "none"]
 
 
 class UsageTotals(BaseModel):
@@ -81,7 +81,14 @@ def compute_usage(
         totals.events += 1
         if group_by == "none":
             continue
-        key = ev.agent_name if group_by == "agent" else ev.trace_id
+        key: str
+        if group_by == "agent":
+            key = ev.agent_name
+        elif group_by == "trace":
+            key = ev.trace_id
+        else:  # group_by == "model"
+            raw_model = ev.payload.get("model")
+            key = raw_model if isinstance(raw_model, str) and raw_model else "unknown"
         bucket = groups.setdefault(key, _Bucket())
         bucket.tokens_used += tokens
         bucket.events += 1
@@ -109,6 +116,8 @@ def parse_group_by(value: str) -> GroupBy | None:
         return "agent"
     if value == "trace":
         return "trace"
+    if value == "model":
+        return "model"
     if value == "none":
         return "none"
     return None

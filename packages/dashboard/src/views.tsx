@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Icons } from "./icons";
 import { useRunsPage } from "./hooks";
 import type { RunsStatusFilter } from "./hooks";
-import type { WireRunSummary } from "./api";
+import type { ToolsReport, UsageReport, WireRunSummary } from "./api";
 import {
   Card,
   FilterChip,
@@ -589,6 +589,8 @@ export function HealthView({
   errorGroups,
   burnRate,
   rejectionCounts,
+  costByModel = null,
+  toolsReport = null,
 }: {
   runtime: RuntimeInfo;
   workers: Worker[];
@@ -596,6 +598,8 @@ export function HealthView({
   errorGroups: ErrorGroup[];
   burnRate: number[];
   rejectionCounts: RejectionCounts;
+  costByModel?: UsageReport | null;
+  toolsReport?: ToolsReport | null;
 }) {
   const burnPerMin = burnRate[burnRate.length - 1];
   const tokensRemaining = runtime.token_budget - runtime.tokens_used;
@@ -840,6 +844,11 @@ export function HealthView({
         </table>
       </Card>
 
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+        <CostByModelCard report={costByModel} />
+        <ToolLatencyCard report={toolsReport} />
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Card
           padded={false}
@@ -977,4 +986,156 @@ export function HealthView({
       </div>
     </div>
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// Cost by model — sourced from /usage?group_by=model.
+// ---------------------------------------------------------------------------
+
+function CostByModelCard({ report }: { report: UsageReport | null }) {
+  const groups = report?.groups ?? [];
+  const total = report?.totals.tokens_used ?? 0;
+  const max = groups.reduce((m, g) => Math.max(m, g.tokens_used), 0);
+
+  return (
+    <Card
+      padded={false}
+      title={
+        <span>
+          <Icons.Coins size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} /> Cost by model
+        </span>
+      }
+      action={
+        <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>
+          {fmt.tokens(total)} tok
+        </span>
+      }
+    >
+      {groups.length === 0 ? (
+        <div style={{ padding: 16, fontSize: 11.5, color: "var(--text-tertiary)" }}>
+          No completed agent runs yet.
+        </div>
+      ) : (
+        <div style={{ padding: "8px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+          {groups.slice(0, 8).map((g) => {
+            const pct = max > 0 ? (g.tokens_used / max) * 100 : 0;
+            return (
+              <div key={g.key}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                  <span
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 11.5,
+                      color: "var(--text-primary)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      maxWidth: "60%",
+                    }}
+                    title={g.key}
+                  >
+                    {g.key}
+                  </span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-secondary)" }}>
+                    {fmt.tokens(g.tokens_used)}
+                    <span style={{ color: "var(--text-tertiary)", marginLeft: 6 }}>
+                      · {g.events} run{g.events === 1 ? "" : "s"}
+                    </span>
+                  </span>
+                </div>
+                <div style={{ height: 4, background: "var(--bg-input)", borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", background: "var(--accent)" }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Per-tool latency — sourced from /tools.
+// ---------------------------------------------------------------------------
+
+function ToolLatencyCard({ report }: { report: ToolsReport | null }) {
+  const rows = report?.rows ?? [];
+  return (
+    <Card
+      padded={false}
+      title={
+        <span>
+          <Icons.Wrench size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} /> Tool latency · {rows.length}
+        </span>
+      }
+    >
+      {rows.length === 0 ? (
+        <div style={{ padding: 16, fontSize: 11.5, color: "var(--text-tertiary)" }}>
+          No tool calls observed yet.
+        </div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: "var(--bg-raised)", borderBottom: "1px solid var(--border-default)" }}>
+              {["Tool", "Calls", "Failures", "p50", "p95", "p99"].map((h) => (
+                <th
+                  key={h}
+                  style={{
+                    padding: "6px 12px",
+                    textAlign: h === "Tool" ? "left" : "right",
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    letterSpacing: 0.4,
+                    textTransform: "uppercase",
+                    color: "var(--text-tertiary)",
+                  }}
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 10).map((r) => {
+              const failColor =
+                r.failures > 0 ? "var(--status-failed)" : "var(--text-tertiary)";
+              return (
+                <tr key={r.key} style={{ height: 30, borderBottom: "1px solid var(--border-subtle)" }}>
+                  <td
+                    style={{
+                      padding: "0 12px",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 11.5,
+                      color: "var(--text-primary)",
+                    }}
+                    title={r.key}
+                  >
+                    {r.tool_name}
+                  </td>
+                  <td style={cellNum("var(--text-primary)")}>{r.calls}</td>
+                  <td style={cellNum(failColor)}>{r.failures}</td>
+                  <td style={cellNum("var(--text-secondary)")}>{r.p50_ms}ms</td>
+                  <td style={cellNum("var(--text-secondary)")}>{r.p95_ms}ms</td>
+                  <td style={cellNum("var(--text-secondary)")}>{r.p99_ms}ms</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  );
+}
+
+function cellNum(color: string): React.CSSProperties {
+  return {
+    padding: "0 12px",
+    fontFamily: "var(--font-mono)",
+    fontSize: 11,
+    textAlign: "right",
+    color,
+  };
 }

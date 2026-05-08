@@ -124,6 +124,9 @@ async def test_completed_event_includes_duration_and_tokens() -> None:
     assert "duration_ms" in completed.payload
     assert "tokens_used" in completed.payload
     assert completed.payload["backend"] == "thread"
+    assert "model" in completed.payload
+    assert isinstance(completed.payload["model"], str)
+    assert completed.payload["model"]  # non-empty
 
 
 async def test_failing_run_emits_agent_failed() -> None:
@@ -175,6 +178,13 @@ async def test_executor_emits_tool_call_lifecycle() -> None:
     assert started.payload["trust_level"] == "high"
     assert started.trace_id == "req-1"
 
+    [completed] = emitter.of(EventType.TOOL_CALL_COMPLETED)
+    assert completed.payload["tool_name"] == "echo"
+    assert "duration_ms" in completed.payload
+    assert isinstance(completed.payload["duration_ms"], int)
+    assert completed.payload["duration_ms"] >= 0
+    assert completed.payload["tokens_used"] == 0
+
 
 async def test_executor_emits_failed_event_on_tool_exception() -> None:
     emitter = _CollectingEmitter()
@@ -198,6 +208,9 @@ async def test_executor_emits_failed_event_on_tool_exception() -> None:
 
     types = emitter.types()
     assert types == [EventType.TOOL_CALL_STARTED, EventType.TOOL_CALL_FAILED]
+    [failed] = emitter.of(EventType.TOOL_CALL_FAILED)
+    assert "duration_ms" in failed.payload
+    assert isinstance(failed.payload["duration_ms"], int)
 
 
 # ---------------------------------------------------------------------------

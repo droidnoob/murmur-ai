@@ -8,7 +8,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, subscribeEvents } from "./api";
-import type { RunsPage, StatsResponse, WireEvent } from "./api";
+import type {
+  RunsPage,
+  StatsResponse,
+  ToolsReport,
+  UsageReport,
+  WireEvent,
+} from "./api";
 import { eventsToRuns, toEventEntry } from "./transform";
 import type { EventEntry, Run } from "./types";
 
@@ -21,6 +27,8 @@ export interface LiveData {
   // Raw wire events keyed by trace_id — feeds the run-detail drawer.
   rawEvents: WireEvent[];
   stats: StatsResponse | null;
+  costByModel: UsageReport | null;
+  toolsReport: ToolsReport | null;
 }
 
 const EVENT_RING_CAP = 500;
@@ -31,6 +39,8 @@ export function useLiveData(): LiveData {
   const [mode, setMode] = useState<LiveMode>("loading");
   const [rawEvents, setRawEvents] = useState<WireEvent[]>([]);
   const [stats, setStats] = useState<StatsResponse | null>(null);
+  const [costByModel, setCostByModel] = useState<UsageReport | null>(null);
+  const [toolsReport, setToolsReport] = useState<ToolsReport | null>(null);
   const seenIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -65,14 +75,20 @@ export function useLiveData(): LiveData {
       setMode("live");
     });
 
-    // Stats poll — refresh header meters + Health tab on a tick.
-    const fetchStats = async (): Promise<void> => {
-      const next = await api.stats();
+    // Stats / cost / tools poll — refresh header meters + Health tab on a tick.
+    const fetchAll = async (): Promise<void> => {
+      const [nextStats, nextCost, nextTools] = await Promise.all([
+        api.stats(),
+        api.usage("model"),
+        api.tools("tool"),
+      ]);
       if (cancelled) return;
-      if (next !== null) setStats(next);
+      if (nextStats !== null) setStats(nextStats);
+      if (nextCost !== null) setCostByModel(nextCost);
+      if (nextTools !== null) setToolsReport(nextTools);
     };
-    void fetchStats();
-    const interval = window.setInterval(() => void fetchStats(), STATS_POLL_MS);
+    void fetchAll();
+    const interval = window.setInterval(() => void fetchAll(), STATS_POLL_MS);
 
     return () => {
       cancelled = true;
@@ -87,7 +103,7 @@ export function useLiveData(): LiveData {
     [rawEvents],
   );
 
-  return { mode, runs, events, rawEvents, stats };
+  return { mode, runs, events, rawEvents, stats, costByModel, toolsReport };
 }
 
 

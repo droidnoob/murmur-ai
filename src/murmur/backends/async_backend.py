@@ -308,6 +308,7 @@ class AsyncBackend:
                             "duration_ms": duration_ms,
                             "tokens_used": tokens_used,
                             "backend": self.name,
+                            "model": _resolve_model_name(agent.model),
                         },
                     )
                 )
@@ -402,6 +403,26 @@ def _apply_post_hooks(agent: Agent, output: BaseModel) -> BaseModel:
     for hook in agent.post_process:
         current = hook(current)
     return current
+
+
+def _resolve_model_name(model: object) -> str:
+    """Render an ``Agent.model`` into a stable string for telemetry.
+
+    String form passes through untouched (the user already supplied a
+    ``"provider:name"`` identifier). For ``Model`` instances the convention
+    matches :mod:`murmur.interop.pydantic_ai`: ``"{system}:{model_name}"``
+    when both are present, otherwise the class name as a fallback so the
+    field is never empty.
+    """
+    if isinstance(model, str):
+        return model
+    system = getattr(model, "system", None)
+    name = getattr(model, "model_name", None)
+    if system and name:
+        return f"{system}:{name}"
+    if name:
+        return str(name)
+    return type(model).__name__
 
 
 def _extract_tokens(pa_result: object) -> int:

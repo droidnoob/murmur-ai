@@ -71,6 +71,16 @@ reload = ["watchfiles>=0.20,<2"]
 # extra — it's transitively available via PydanticAI.
 mcp-server = ["mcp>=1.27,<2.0"]
 
+# OTel metrics export — gen_ai.* histograms + Murmur tool/rejection
+# counters via :class:`OTelMetricsEmitter`. Pulls the OTel API + SDK only
+# when the operator opts in; importing the emitter without this extra
+# raises a clear ImportError. Wire your own exporter (OTLP gRPC/HTTP,
+# Prometheus, etc.) on top — Murmur stays out of exporter config.
+otel = [
+    "opentelemetry-api>=1.39,<1.40",
+    "opentelemetry-sdk>=1.39,<1.40",
+]
+
 # uvloop — drop-in replacement for the stdlib asyncio event loop.
 # Opt-in via ``murmur serve --uvloop`` / ``murmur worker start --uvloop``
 # or the ``MURMUR_USE_UVLOOP=1`` env var. POSIX-only; uvloop has no
@@ -123,6 +133,11 @@ dev = [
     # Pulled into dev so the reload helper's tests run without the [reload]
     # extra installed.
     "watchfiles>=0.20,<2",
+    # OTel SDK + API — pulled into dev so the OTelMetricsEmitter tests run
+    # against the in-memory metric reader without requiring `[otel]`. Range
+    # follows PydanticAI's pin to keep the resolver happy.
+    "opentelemetry-api>=1.39,<1.40",
+    "opentelemetry-sdk>=1.39,<1.40",
 ]
 
 # Docs build — kept separate so user installs and the dev test suite never

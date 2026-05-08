@@ -242,6 +242,8 @@ export function MurmurDashboard({
             errorGroups={errorGroups}
             burnRate={burnRate}
             rejectionCounts={rejectionCounts}
+            costByModel={live.costByModel}
+            toolsReport={live.toolsReport}
           />
         )}
 

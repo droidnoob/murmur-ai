@@ -9,6 +9,7 @@ and publishes a ``ResultMessage`` back. The original ``runtime.run`` /
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -21,6 +22,7 @@ from murmur.agent import Agent
 from murmur.backends._inmemory_broker import InMemoryBroker
 from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
+from murmur.events.types import EventType, RuntimeEvent
 from murmur.runtime import AgentRuntime
 from murmur.types import TaskSpec, TrustLevel
 from murmur.worker.worker import Worker
@@ -325,3 +327,108 @@ async def test_worker_start_writes_banner_with_subscriptions(
         assert "murmur.echo.tasks" in captured.err
     finally:
         await worker.stop()
+
+
+class _CollectingEmitter:
+    def __init__(self) -> None:
+        self.events: list[RuntimeEvent] = []
+
+    async def emit(self, event: RuntimeEvent) -> None:
+        self.events.append(event)
+
+
+async def test_heartbeat_emits_at_configured_cadence(echo_agent: Agent) -> None:
+    broker = InMemoryBroker()
+    emitter = _CollectingEmitter()
+    backend = AsyncBackend(event_emitter=emitter)
+    backend._build_pa_agent = _stub_pa_agent  # ty: ignore[invalid-assignment]
+    worker_runtime = AgentRuntime(
+        backend=backend, event_emitter=emitter, runtime_id="rt-hb"
+    )
+
+    worker = Worker(
+        broker=broker,
+        agents={echo_agent.name: echo_agent},
+        runtime=worker_runtime,
+        heartbeat_seconds=0.05,
+    )
+    await worker.start()
+    try:
+        await asyncio.sleep(0.18)
+    finally:
+        await worker.stop()
+
+    beats = [e for e in emitter.events if e.event_type is EventType.WORKER_HEARTBEAT]
+    assert len(beats) >= 2
+    payload = beats[0].payload
+    assert payload["agent_subscriptions"] == ["echo"]
+    assert payload["concurrency_cap"] == 10
+    assert payload["runtime_id"] == "rt-hb"
+    assert payload["in_flight"] == 0
+
+
+async def test_heartbeat_zero_disables(echo_agent: Agent) -> None:
+    broker = InMemoryBroker()
+    emitter = _CollectingEmitter()
+    backend = AsyncBackend(event_emitter=emitter)
+    backend._build_pa_agent = _stub_pa_agent  # ty: ignore[invalid-assignment]
+    worker_runtime = AgentRuntime(backend=backend, event_emitter=emitter)
+
+    worker = Worker(
+        broker=broker,
+        agents={echo_agent.name: echo_agent},
+        runtime=worker_runtime,
+        heartbeat_seconds=0,
+    )
+    await worker.start()
+    try:
+        await asyncio.sleep(0.05)
+    finally:
+        await worker.stop()
+
+    beats = [e for e in emitter.events if e.event_type is EventType.WORKER_HEARTBEAT]
+    assert beats == []
+
+
+async def test_worker_started_and_stopped_events_fire(echo_agent: Agent) -> None:
+    broker = InMemoryBroker()
+    emitter = _CollectingEmitter()
+    backend = AsyncBackend(event_emitter=emitter)
+    backend._build_pa_agent = _stub_pa_agent  # ty: ignore[invalid-assignment]
+    worker_runtime = AgentRuntime(
+        backend=backend, event_emitter=emitter, runtime_id="rt-life"
+    )
+
+    worker = Worker(
+        broker=broker,
+        agents={echo_agent.name: echo_agent},
+        runtime=worker_runtime,
+        concurrency=3,
+        prefetch=1,
+        heartbeat_seconds=0,
+    )
+    await worker.start()
+    await worker.stop()
+
+    started = [e for e in emitter.events if e.event_type is EventType.WORKER_STARTED]
+    stopped = [e for e in emitter.events if e.event_type is EventType.WORKER_STOPPED]
+    assert len(started) == 1
+    assert len(stopped) == 1
+    assert started[0].payload["runtime_id"] == "rt-life"
+    assert started[0].payload["agents"] == ["echo"]
+    assert started[0].payload["concurrency"] == 3
+    assert started[0].payload["prefetch"] == 1
+    assert started[0].payload["heartbeat_seconds"] == 0
+    assert stopped[0].payload["runtime_id"] == "rt-life"
+    assert stopped[0].payload["agents"] == ["echo"]
+
+
+async def test_heartbeat_negative_rejected(echo_agent: Agent) -> None:
+    broker = InMemoryBroker()
+    with pytest.raises(Exception, match="heartbeat_seconds"):
+        Worker(
+            broker=broker,
+            agents={echo_agent.name: echo_agent},
+            runtime=_make_worker_runtime(),
+            heartbeat_seconds=-1,
+        )

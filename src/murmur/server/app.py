@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from murmur.core.errors import RegistryError
+from murmur.events.store.tools import ToolsReport
 from murmur.events.store.usage import UsageReport
 from murmur.runs import (
     InMemoryRunStore,
@@ -599,10 +600,10 @@ class AgentServer:
             ) -> UsageReport:
                 """Token-usage rollup over AGENT_COMPLETED events.
 
-                ``group_by`` ∈ ``{"agent", "trace", "none"}``. Reads up
-                to 100k rows from the store per request; clients that
-                need bigger windows should pass ``since``/``until`` to
-                narrow the scan.
+                ``group_by`` ∈ ``{"agent", "trace", "model", "none"}``.
+                Reads up to 100k rows from the store per request; clients
+                that need bigger windows should pass ``since``/``until``
+                to narrow the scan.
                 """
                 from murmur.events.store.usage import (
                     compute_usage,
@@ -613,7 +614,9 @@ class AgentServer:
                 if parsed is None:
                     raise HTTPException(
                         status_code=400,
-                        detail=(f"group_by must be agent|trace|none, got {group_by!r}"),
+                        detail=(
+                            f"group_by must be agent|trace|model|none, got {group_by!r}"
+                        ),
                     )
                 events = await event_store.query(
                     since=_parse_iso(since),
@@ -621,6 +624,39 @@ class AgentServer:
                     limit=100_000,
                 )
                 return compute_usage(events, group_by=parsed)
+
+            @router.get("/tools")
+            async def get_tools(
+                group_by: str = "tool",
+                since: str | None = None,
+                until: str | None = None,
+            ) -> ToolsReport:
+                """Per-tool latency + call rollup.
+
+                Aggregates ``TOOL_CALL_COMPLETED`` and ``TOOL_CALL_FAILED``
+                events into ``{calls, failures, p50_ms, p95_ms, p99_ms,
+                avg_ms}`` per tool. ``group_by`` ∈ ``{"tool",
+                "agent_tool"}`` — the latter splits each tool's row by
+                its caller agent. Reads up to 100k rows; pass
+                ``since``/``until`` to narrow.
+                """
+                from murmur.events.store.tools import (
+                    compute_tools,
+                    parse_tools_group_by,
+                )
+
+                parsed = parse_tools_group_by(group_by)
+                if parsed is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(f"group_by must be tool|agent_tool, got {group_by!r}"),
+                    )
+                events = await event_store.query(
+                    since=_parse_iso(since),
+                    until=_parse_iso(until),
+                    limit=100_000,
+                )
+                return compute_tools(events, group_by=parsed)
 
             @router.get("/runtime/stats")
             async def get_runtime_stats() -> StatsResponse:
@@ -635,7 +671,14 @@ class AgentServer:
                     mcp_enrollments=self._mcp_enrollments.values(),
                 )
 
-            _ = list_runs, get_run_tree, query_events, get_usage, get_runtime_stats
+            _ = (
+                list_runs,
+                get_run_tree,
+                query_events,
+                get_usage,
+                get_tools,
+                get_runtime_stats,
+            )
 
         @router.post("/runs/{run_id}/cancel")
         async def cancel_run(run_id: str) -> dict[str, str]:

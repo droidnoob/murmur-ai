@@ -37,7 +37,9 @@ export type EventType =
   | "tool_call_started"
   | "tool_call_completed"
   | "tool_call_failed"
-  | "worker_started";
+  | "worker_started"
+  | "worker_stopped"
+  | "worker_heartbeat";
 
 export interface EventEntry {
   ts: string;

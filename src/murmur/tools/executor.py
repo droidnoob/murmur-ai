@@ -11,6 +11,7 @@ structurally. Wired into :class:`murmur.AgentRuntime` at dispatch time.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -116,27 +117,43 @@ class ToolExecutor:
                 payload={"tool_name": name, "trust_level": trust_level.value},
             )
         )
+        started = time.perf_counter()
         try:
             result = await func(**args)
         except Exception as exc:
+            duration_ms = int((time.perf_counter() - started) * 1000)
             await self._emitter.emit(
                 RuntimeEvent(
                     event_type=EventType.TOOL_CALL_FAILED,
                     agent_name=agent_name,
                     task_id=task_id,
                     trace_id=effective_trace_id,
-                    payload={"tool_name": name, "error": str(exc)},
+                    payload={
+                        "tool_name": name,
+                        "error": str(exc),
+                        "duration_ms": duration_ms,
+                    },
                 )
             )
             raise ToolExecutionError(f"tool '{name}' failed: {exc}") from exc
 
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        # tokens_used is per-tool LLM cost attribution. The tool function
+        # itself doesn't consume tokens — its cost belongs to the LLM
+        # round-trip that triggered the call. Until the agent loop reports
+        # a delta, this is best-effort 0 so the dashboard's per-tool
+        # latency panel still has the field present.
         await self._emitter.emit(
             RuntimeEvent(
                 event_type=EventType.TOOL_CALL_COMPLETED,
                 agent_name=agent_name,
                 task_id=task_id,
                 trace_id=effective_trace_id,
-                payload={"tool_name": name},
+                payload={
+                    "tool_name": name,
+                    "duration_ms": duration_ms,
+                    "tokens_used": 0,
+                },
             )
         )
         return result

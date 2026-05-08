@@ -19,7 +19,7 @@ from pydantic_ai.models.test import TestModel
 from tests.contracts.backend_contract import BackendContract
 
 from murmur.agent import Agent
-from murmur.backends.async_backend import AsyncBackend
+from murmur.backends.async_backend import AsyncBackend, _resolve_model_name
 from murmur.context.null import NullContextPasser
 from murmur.core.errors import SpawnError
 from murmur.core.protocols.backend import BackendStatus
@@ -334,3 +334,24 @@ async def test_gather_empty_returns_empty(
 ) -> None:
     results = await async_backend.gather(echo_agent, [], max_concurrency=10)
     assert results == []
+
+
+def test_resolve_model_name_passes_through_string() -> None:
+    assert _resolve_model_name("anthropic:claude-sonnet-4-6") == (
+        "anthropic:claude-sonnet-4-6"
+    )
+
+
+def test_resolve_model_name_combines_system_and_model_name() -> None:
+    class _FakeModel:
+        system = "openai"
+        model_name = "gpt-5.2"
+
+    assert _resolve_model_name(_FakeModel()) == "openai:gpt-5.2"
+
+
+def test_resolve_model_name_falls_back_to_class_name() -> None:
+    class _Bare:
+        pass
+
+    assert _resolve_model_name(_Bare()) == "_Bare"

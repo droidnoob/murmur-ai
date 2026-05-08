@@ -45,7 +45,10 @@ class EventType(StrEnum):
     AGENT_COMPLETED = "agent_completed"
     """Emitted when an agent run produces an output.
 
-    Payload: ``{"duration_ms": int, "tokens_used": int, "backend": str}``."""
+    Payload: ``{"duration_ms": int, "tokens_used": int, "backend": str,
+    "model": str}``. ``model`` is the resolved model identifier — either
+    the user-supplied ``"provider:name"`` string or ``"{system}:{model_name}"``
+    when an instance was passed."""
 
     AGENT_FAILED = "agent_failed"
     """Emitted when an agent run errors.
@@ -60,12 +63,14 @@ class EventType(StrEnum):
     TOOL_CALL_COMPLETED = "tool_call_completed"
     """Emitted on a successful tool return.
 
-    Payload: ``{"tool_name": str}``."""
+    Payload: ``{"tool_name": str, "duration_ms": int, "tokens_used": int}``.
+    ``tokens_used`` is best-effort LLM cost attribution to this tool call;
+    until the agent loop reports a per-call delta it is ``0``."""
 
     TOOL_CALL_FAILED = "tool_call_failed"
     """Emitted on a tool exception.
 
-    Payload: ``{"tool_name": str, "error": str}``."""
+    Payload: ``{"tool_name": str, "error": str, "duration_ms": int}``."""
 
     BATCH_STARTED = "batch_started"
     """Emitted at the head of :meth:`AgentRuntime.gather`.
@@ -96,6 +101,34 @@ class EventType(StrEnum):
     """Emitted by depth-limit middleware just before raising ``DepthLimitError``.
 
     Payload: ``{"limit": int, "depth": int}``."""
+
+    WORKER_STARTED = "worker_started"
+    """Emitted by :class:`Worker.start` after subscriptions are live and the
+    worker is consuming. Pairs with :data:`WORKER_STOPPED` for restart-history
+    reconstruction.
+
+    Payload: ``{"runtime_id": str, "agents": list[str], "broker_scheme": str | None,
+    "concurrency": int, "prefetch": int, "consumer_id": str | None,
+    "heartbeat_seconds": float}``."""
+
+    WORKER_STOPPED = "worker_stopped"
+    """Emitted by :class:`Worker.stop` before draining in-flight tasks. The
+    event still flows because the runtime's emitter chain is independent of
+    the broker subscription that the stop is about to drop.
+
+    Payload: ``{"runtime_id": str, "agents": list[str],
+    "broker_scheme": str | None}``."""
+
+    WORKER_HEARTBEAT = "worker_heartbeat"
+    """Emitted by :class:`Worker` on a configurable timer so the dashboard's
+    fleet view can answer "is this worker alive?" without inferring liveness
+    from activity. Fires from ``start()`` until ``stop()``; ``heartbeat_seconds=0``
+    disables it.
+
+    Payload: ``{"agent_subscriptions": list[str], "in_flight": int,
+    "concurrency_cap": int, "broker_scheme": str | None, "runtime_id": str}``.
+    ``agent_name`` on the envelope carries the worker's runtime id (the worker
+    isn't tied to a single agent — its runtime id is the closest stable handle)."""
 
 
 class RuntimeEvent(BaseModel):

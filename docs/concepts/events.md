@@ -53,7 +53,39 @@ class EventType(StrEnum):
     BATCH_COMPLETED = "batch_completed"
     GROUP_STARTED = "group_started"
     GROUP_COMPLETED = "group_completed"
+    WORKER_STARTED = "worker_started"
+    WORKER_STOPPED = "worker_stopped"
+    WORKER_HEARTBEAT = "worker_heartbeat"
 ```
+
+### Per-event payload contract
+
+| `EventType` | Payload |
+|---|---|
+| `AGENT_DISPATCHED` | `{backend, broker, trust_level}` |
+| `AGENT_SPAWNED` | `{backend, trust_level}` |
+| `AGENT_COMPLETED` | `{duration_ms, tokens_used, backend, model}` |
+| `AGENT_FAILED` | `{duration_ms, error, backend}` (typed reason in `reason` when present) |
+| `TOOL_CALL_STARTED` | `{tool_name, trust_level}` |
+| `TOOL_CALL_COMPLETED` | `{tool_name, duration_ms, tokens_used}` |
+| `TOOL_CALL_FAILED` | `{tool_name, error, duration_ms}` |
+| `BATCH_STARTED` | `{task_count, max_concurrency}` |
+| `BATCH_COMPLETED` | `{task_count, success_count, failure_count}` |
+| `GROUP_STARTED` | `{group_name, node_count}` |
+| `GROUP_COMPLETED` | `{group_name, duration_ms}` |
+| `BUDGET_EXCEEDED` | `{limit, used, scope}` |
+| `DEPTH_LIMIT_EXCEEDED` | `{limit, depth}` |
+| `WORKER_STARTED` | `{runtime_id, agents, broker_scheme, concurrency, prefetch, consumer_id, heartbeat_seconds}` |
+| `WORKER_STOPPED` | `{runtime_id, agents, broker_scheme}` |
+| `WORKER_HEARTBEAT` | `{runtime_id, agent_subscriptions, in_flight, concurrency_cap, broker_scheme}` |
+
+`AGENT_COMPLETED.model` is the resolved identifier — either the
+user-supplied `"provider:name"` string or `"{system}:{model_name}"` when
+a `Model` instance was passed. `TOOL_CALL_COMPLETED.tokens_used` is
+best-effort LLM cost attribution to the tool call; until the agent loop
+reports a per-call delta it is `0`. Worker-lifecycle events use the
+worker's `runtime_id` as both `agent_name` and `trace_id` (a worker isn't
+tied to a single agent — the runtime id is the closest stable handle).
 
 ## `EventEmitter` Protocol
 
@@ -109,6 +141,75 @@ runtime = AgentRuntime(
 )
 ```
 
+### `OTelMetricsEmitter`
+
+OpenTelemetry GenAI metrics adapter. Drops in alongside `LogEventEmitter`
+inside a `MultiEventEmitter`; every `RuntimeEvent` that carries
+quantitative information is recorded as an OTel histogram or counter.
+
+Behind the optional `murmur-ai[otel]` extra:
+
+```bash
+pip install "murmur-ai[otel]"
+```
+
+Importing the emitter without the extra raises a clear `ImportError`
+that names the missing extra.
+
+#### What gets recorded
+
+| Instrument | Type | Unit | When |
+|---|---|---|---|
+| `gen_ai.client.token.usage` | histogram | `{token}` | `AGENT_COMPLETED` with `tokens_used > 0` |
+| `gen_ai.client.operation.duration` | histogram | `s` | `AGENT_COMPLETED` and `AGENT_FAILED` |
+| `murmur.tool.calls` | counter | `{call}` | `TOOL_CALL_COMPLETED` and `TOOL_CALL_FAILED` |
+| `murmur.tool.duration_ms` | histogram | `ms` | `TOOL_CALL_COMPLETED` and `TOOL_CALL_FAILED` |
+| `murmur.rejections` | counter | `{rejection}` | `BUDGET_EXCEEDED`, `DEPTH_LIMIT_EXCEEDED`, `AGENT_FAILED` |
+
+The `gen_ai.*` instruments follow the OpenTelemetry [GenAI semantic
+conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/).
+Attributes match the spec: `gen_ai.operation.name` (`"invoke_agent"`),
+`gen_ai.provider.name` and `gen_ai.request.model` parsed out of Murmur's
+resolved model identifier (`"provider:name"`), `gen_ai.token.type`
+(`"total"` — Murmur sums input/output at the runtime level), and
+`error.type` on failed runs (the typed error class, e.g.
+`BudgetExceededError`, `DepthLimitError`).
+
+#### Wiring
+
+Murmur deliberately stays out of exporter / endpoint configuration. Set
+the global `MeterProvider` before constructing the emitter, or pass an
+explicit one in:
+
+```python
+from murmur import AgentRuntime
+from murmur.events import LogEventEmitter, MultiEventEmitter, OTelMetricsEmitter
+from opentelemetry import metrics
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+
+reader = PeriodicExportingMetricReader(OTLPMetricExporter())
+metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
+
+runtime = AgentRuntime(
+    event_emitter=MultiEventEmitter([LogEventEmitter(), OTelMetricsEmitter()]),
+)
+```
+
+The same `MeterProvider` is what Datadog (v1.37+), Grafana, Logfire, and
+Phoenix natively ingest. Murmur emits — your provider decides where the
+metrics land.
+
+#### Cardinality discipline
+
+Attributes used for labels are bounded by design: `agent`, `tool`,
+`gen_ai.provider.name`, `gen_ai.request.model`. Murmur deliberately does
+**not** label by `trace_id`, `task_id`, prompt content, or tool argument
+blobs — those are the cardinality bombs that fall over OTel backends in
+production. If a custom emission point needs a high-cardinality label,
+log the event instead of metric-ing it.
+
 ### `BrokerEventBridge`
 
 Distributed-mode emitter. Publishes events to a per-runtime broker
@@ -128,6 +229,19 @@ murmur serve --port 8420 [--broker URL] [--publish-events]
 `GET /events/stream` delivers live `RuntimeEvent` frames as SSE. Use
 `--broker URL --publish-events` to make one `serve` process the SSE
 dashboard for an entire worker fleet via `BrokerEventBridge`.
+
+When an `EventStore` is wired into the runtime's emitter chain (the
+`StoreEventEmitter` adapter does this — see
+`murmur.events.store`), the server also exposes a small set of
+read-only rollups computed on demand from the store:
+
+| Endpoint | Returns | Notes |
+|---|---|---|
+| `GET /events?limit=&since=&until=&trace_id=&event_type=` | recent `RuntimeEvent` rows | up to 100k per request |
+| `GET /usage?group_by=agent\|trace\|model\|none` | tokens grouped by key | aggregates `AGENT_COMPLETED.tokens_used`; `model` keys on the resolved identifier with `unknown` fallback |
+| `GET /tools?group_by=tool\|agent_tool` | per-tool latency rows | `{calls, failures, p50_ms, p95_ms, p99_ms, avg_ms}`; counts both `TOOL_CALL_COMPLETED` and `TOOL_CALL_FAILED` toward `calls`, only failures toward `failures` |
+| `GET /runtime/stats` | composite dashboard rollup | header meters, burn rate, rejection breakdown, error groups, MCP servers, **and** worker fleet — workers are derived from the latest `WORKER_HEARTBEAT` per `runtime_id`, with status `healthy` (<90s), `stale` (<300s), or `down` (≥300s or after a `WORKER_STOPPED`) |
+| `GET /runs/{trace_id}/tree` | event tree for one run | feeds the run inspector |
 
 For local development, add `--reload` to auto-restart on file changes
 (uses `watchfiles`, same library as FastStream + uvicorn — install via

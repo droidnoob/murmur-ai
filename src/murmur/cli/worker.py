@@ -61,6 +61,15 @@ def register_worker(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     start.add_argument("--concurrency", type=int, default=10)
     start.add_argument("--prefetch", type=int, default=5)
     start.add_argument(
+        "--heartbeat-seconds",
+        type=float,
+        default=30.0,
+        help=(
+            "Cadence (seconds) of WORKER_HEARTBEAT events. Set to 0 to "
+            "disable. Default: 30."
+        ),
+    )
+    start.add_argument(
         "--consumer-id",
         type=str,
         default=None,
@@ -210,6 +219,7 @@ async def _run_worker(args: argparse.Namespace) -> int:
         concurrency=args.concurrency,
         prefetch=args.prefetch,
         consumer_id=args.consumer_id,
+        heartbeat_seconds=args.heartbeat_seconds,
     )
 
     stop_event = asyncio.Event()

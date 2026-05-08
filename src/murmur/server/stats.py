@@ -198,6 +198,71 @@ def compute_tokens_total(events: Iterable[RuntimeEvent]) -> int:
     )
 
 
+def compute_workers_from_heartbeats(
+    events: Iterable[RuntimeEvent],
+    *,
+    now: datetime,
+    stale_after_seconds: float = 90.0,
+    down_after_seconds: float = 300.0,
+) -> list[WorkerInfo]:
+    """Roll up the latest WORKER_HEARTBEAT per ``runtime_id``.
+
+    Status thresholds default to 3x and 10x the standard 30s heartbeat
+    cadence — a worker that misses 3 beats is ``stale``, 10 is ``down``.
+    A :data:`WORKER_STOPPED` event observed after the latest heartbeat
+    flips the row to ``down`` immediately so a clean shutdown doesn't
+    have to wait out the staleness timer.
+    """
+    latest: dict[str, RuntimeEvent] = {}
+    stopped_at: dict[str, datetime] = {}
+    for ev in events:
+        if ev.event_type is EventType.WORKER_HEARTBEAT:
+            rid = _payload_str(ev, "runtime_id") or ev.agent_name
+            prior = latest.get(rid)
+            if prior is None or ev.timestamp > prior.timestamp:
+                latest[rid] = ev
+        elif ev.event_type is EventType.WORKER_STOPPED:
+            rid = _payload_str(ev, "runtime_id") or ev.agent_name
+            prior_stop = stopped_at.get(rid)
+            if prior_stop is None or ev.timestamp > prior_stop:
+                stopped_at[rid] = ev.timestamp
+    rows: list[WorkerInfo] = []
+    for rid, ev in latest.items():
+        age = (now - ev.timestamp).total_seconds()
+        stop_ts = stopped_at.get(rid)
+        cleanly_stopped = stop_ts is not None and stop_ts >= ev.timestamp
+        if cleanly_stopped or age >= down_after_seconds:
+            status = "down"
+        elif age >= stale_after_seconds:
+            status = "stale"
+        else:
+            status = "healthy"
+        subscribed_raw = ev.payload.get("agent_subscriptions")
+        subscribed = (
+            [s for s in subscribed_raw if isinstance(s, str)]
+            if isinstance(subscribed_raw, list)
+            else []
+        )
+        in_flight_raw = ev.payload.get("in_flight")
+        concurrency_raw = ev.payload.get("concurrency_cap")
+        scheme = _payload_str(ev, "broker_scheme")
+        in_flight = int(in_flight_raw) if isinstance(in_flight_raw, int) else 0
+        concurrency = int(concurrency_raw) if isinstance(concurrency_raw, int) else 0
+        rows.append(
+            WorkerInfo(
+                id=rid,
+                broker=scheme or "—",
+                subscribed=subscribed,
+                concurrency=concurrency,
+                in_flight=in_flight,
+                last_hb=_humanise(now - ev.timestamp),
+                status=status,
+            )
+        )
+    rows.sort(key=lambda w: w.id)
+    return rows
+
+
 def compute_observed_spawn_count(events: Iterable[RuntimeEvent]) -> int:
     """Count of agents observed to have started (AGENT_SPAWNED events).
 
@@ -235,10 +300,15 @@ def build_stats(
     events: list[RuntimeEvent],
     sse_active: bool,
     mcp_enrollments: Iterable[MCPEnrollment],
-    workers: Iterable[WorkerInfo] = (),
+    workers: Iterable[WorkerInfo] | None = None,
     now: datetime | None = None,
 ) -> StatsResponse:
-    """Assemble :class:`StatsResponse` from a runtime + event snapshot."""
+    """Assemble :class:`StatsResponse` from a runtime + event snapshot.
+
+    When ``workers`` is omitted, derive the fleet from
+    :data:`EventType.WORKER_HEARTBEAT` events in ``events``. Pass an
+    explicit list to override (tests, custom rollups).
+    """
     now = now or datetime.now(tz=UTC)
     backend = runtime.backend
     backend_name = backend.__class__.__name__
@@ -258,7 +328,11 @@ def build_stats(
         else None
     )
     mcp_servers = mcp_servers_from_enrollments(mcp_enrollments)
-    workers_list = list(workers)
+    workers_list = (
+        list(workers)
+        if workers is not None
+        else compute_workers_from_heartbeats(events, now=now)
+    )
     # Take whichever count is larger: the runtime's internal counter (correct
     # when dispatches go through ``runtime.run``) or the observed count from
     # the store (correct for broker-relayed or directly-appended events).
@@ -298,5 +372,6 @@ __all__ = [
     "compute_observed_spawn_count",
     "compute_rejection_counts",
     "compute_tokens_total",
+    "compute_workers_from_heartbeats",
     "mcp_servers_from_enrollments",
 ]

@@ -52,6 +52,9 @@ def test_event_type_complete_set() -> None:
         "group_completed",
         "budget_exceeded",
         "depth_limit_exceeded",
+        "worker_started",
+        "worker_stopped",
+        "worker_heartbeat",
     }
     assert {e.value for e in EventType} == expected
 

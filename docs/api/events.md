@@ -10,6 +10,7 @@ from murmur.events import (
     EventType,
     LogEventEmitter,
     MultiEventEmitter,
+    OTelMetricsEmitter,
     RuntimeEvent,
     SSEEventEmitter,
 )
@@ -57,6 +58,13 @@ from murmur.events import (
 ### `BrokerEventBridge`
 
 ::: murmur.events.BrokerEventBridge
+    options:
+      heading_level: 4
+      show_bases: false
+
+### `OTelMetricsEmitter`
+
+::: murmur.events.otel.OTelMetricsEmitter
     options:
       heading_level: 4
       show_bases: false

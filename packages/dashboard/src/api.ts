@@ -19,9 +19,26 @@ export interface UsageGroup {
 }
 
 export interface UsageReport {
-  group_by: "agent" | "trace" | "none";
+  group_by: "agent" | "trace" | "model" | "none";
   totals: { tokens_used: number; events: number };
   groups: UsageGroup[];
+}
+
+export interface ToolStats {
+  key: string;
+  tool_name: string;
+  agent_name: string | null;
+  calls: number;
+  failures: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  avg_ms: number;
+}
+
+export interface ToolsReport {
+  group_by: "tool" | "agent_tool";
+  rows: ToolStats[];
 }
 
 export interface WireRuntimeStats {
@@ -131,8 +148,12 @@ export const api = {
   runTree: (traceId: string): Promise<WireEvent[] | null> =>
     safeJson(`/runs/${encodeURIComponent(traceId)}/tree`),
   events: (limit = 200): Promise<WireEvent[] | null> => safeJson(`/events?limit=${limit}`),
-  usage: (groupBy: "agent" | "trace" | "none" = "agent"): Promise<UsageReport | null> =>
-    safeJson(`/usage?group_by=${groupBy}`),
+  usage: (
+    groupBy: "agent" | "trace" | "model" | "none" = "agent",
+  ): Promise<UsageReport | null> => safeJson(`/usage?group_by=${groupBy}`),
+  tools: (
+    groupBy: "tool" | "agent_tool" = "tool",
+  ): Promise<ToolsReport | null> => safeJson(`/tools?group_by=${groupBy}`),
   stats: (): Promise<StatsResponse | null> => safeJson(`/runtime/stats`),
 };
 

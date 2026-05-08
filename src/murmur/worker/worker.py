@@ -16,6 +16,7 @@ Satisfies :class:`murmur.core.protocols.worker.Worker` structurally.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
@@ -55,6 +56,7 @@ class Worker:
         prefetch: int = 5,
         consumer_id: str | None = None,
         signing_key: bytes | tuple[bytes, ...] | None = None,
+        heartbeat_seconds: float = 30.0,
     ) -> None:
         if not agents:
             raise SpecValidationError("Worker requires at least one agent")
@@ -62,6 +64,8 @@ class Worker:
             raise SpecValidationError("concurrency must be >= 1")
         if prefetch < 1:
             raise SpecValidationError("prefetch must be >= 1")
+        if heartbeat_seconds < 0:
+            raise SpecValidationError("heartbeat_seconds must be >= 0 (0 disables)")
         # Normalise signing_key to a tuple; ``None`` means "verification
         # disabled, broker is trusted" (default — unchanged behaviour).
         # A tuple supports key rotation: stamp new workers with
@@ -136,6 +140,8 @@ class Worker:
         self._on_complete: OnComplete | None = None
         self._on_error: OnError | None = None
         self._started: bool = False
+        self._heartbeat_seconds: float = float(heartbeat_seconds)
+        self._heartbeat_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------ hooks
 
@@ -206,17 +212,87 @@ class Worker:
             broker=broker_repr,
             concurrency=self._concurrency,
         )
+        from murmur.events.types import EventType, RuntimeEvent
+
+        broker_scheme = getattr(self._broker, "scheme", None)
+        agents_list = list(self._agents.keys())
+        await self._runtime.event_emitter.emit(
+            RuntimeEvent(
+                event_type=EventType.WORKER_STARTED,
+                agent_name=runtime_id,
+                trace_id=runtime_id,
+                payload={
+                    "runtime_id": runtime_id,
+                    "agents": agents_list,
+                    "broker_scheme": broker_scheme,
+                    "concurrency": self._concurrency,
+                    "prefetch": self._prefetch,
+                    "consumer_id": self._consumer_id,
+                    "heartbeat_seconds": self._heartbeat_seconds,
+                },
+            )
+        )
+        if self._heartbeat_seconds > 0:
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def stop(self) -> None:
         """Drain in-flight tasks then disconnect the broker."""
         if not self._started:
             return
+        from murmur.events.types import EventType, RuntimeEvent
+
+        runtime_id = self._runtime.runtime_id
+        await self._runtime.event_emitter.emit(
+            RuntimeEvent(
+                event_type=EventType.WORKER_STOPPED,
+                agent_name=runtime_id,
+                trace_id=runtime_id,
+                payload={
+                    "runtime_id": runtime_id,
+                    "agents": list(self._agents.keys()),
+                    "broker_scheme": getattr(self._broker, "scheme", None),
+                },
+            )
+        )
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._heartbeat_task
+            self._heartbeat_task = None
         active = list(self._active.values())
         if active:
             await asyncio.gather(*active, return_exceptions=True)
         await self._broker.stop()
         self._started = False
         await log.ainfo("worker_stopped")
+
+    async def _heartbeat_loop(self) -> None:
+        """Periodically emit :data:`EventType.WORKER_HEARTBEAT` until cancelled."""
+        from murmur.events.types import EventType, RuntimeEvent
+
+        emitter = self._runtime.event_emitter
+        runtime_id = self._runtime.runtime_id
+        broker_scheme = getattr(self._broker, "scheme", None)
+        agent_subscriptions = list(self._agents.keys())
+        try:
+            while True:
+                await asyncio.sleep(self._heartbeat_seconds)
+                await emitter.emit(
+                    RuntimeEvent(
+                        event_type=EventType.WORKER_HEARTBEAT,
+                        agent_name=runtime_id,
+                        trace_id=runtime_id,
+                        payload={
+                            "agent_subscriptions": agent_subscriptions,
+                            "in_flight": len(self._active),
+                            "concurrency_cap": self._concurrency,
+                            "broker_scheme": broker_scheme,
+                            "runtime_id": runtime_id,
+                        },
+                    )
+                )
+        except asyncio.CancelledError:
+            return
 
     # ------------------------------------------------------------------ private
 

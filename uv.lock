@@ -2278,6 +2278,10 @@ mcp-server = [
 nats = [
     { name = "faststream", extra = ["nats"] },
 ]
+otel = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+]
 rabbitmq = [
     { name = "faststream", extra = ["rabbit"] },
 ]
@@ -2314,6 +2318,8 @@ dev = [
     { name = "httpx" },
     { name = "hypothesis" },
     { name = "murmur-client" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -2348,6 +2354,8 @@ requires-dist = [
     { name = "faststream", extras = ["redis"], marker = "extra == 'all'", specifier = "==0.6.7" },
     { name = "faststream", extras = ["redis"], marker = "extra == 'redis'", specifier = "==0.6.7" },
     { name = "mcp", marker = "extra == 'mcp-server'", specifier = ">=1.27,<2.0" },
+    { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.39,<1.40" },
+    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.39,<1.40" },
     { name = "pydantic", specifier = "==2.13.3" },
     { name = "pydantic-ai", specifier = "==1.87.0" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -2359,7 +2367,7 @@ requires-dist = [
     { name = "uvloop", marker = "extra == 'uvloop'", specifier = ">=0.21,<1.0" },
     { name = "watchfiles", marker = "extra == 'reload'", specifier = ">=0.20,<2" },
 ]
-provides-extras = ["kafka", "nats", "rabbitmq", "redis", "all", "server", "sqlite", "rocksdb", "redis-runstore", "container", "reload", "mcp-server", "uvloop"]
+provides-extras = ["kafka", "nats", "rabbitmq", "redis", "all", "server", "sqlite", "rocksdb", "redis-runstore", "container", "reload", "mcp-server", "otel", "uvloop"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2373,6 +2381,8 @@ dev = [
     { name = "httpx", specifier = ">=0.27.0,<1.0" },
     { name = "hypothesis", specifier = "==6.152.2" },
     { name = "murmur-client", editable = "packages/murmur-client" },
+    { name = "opentelemetry-api", specifier = ">=1.39,<1.40" },
+    { name = "opentelemetry-sdk", specifier = ">=1.39,<1.40" },
     { name = "pre-commit", specifier = "==4.6.0" },
     { name = "pytest", specifier = "==9.0.3" },
     { name = "pytest-asyncio", specifier = "==1.3.0" },

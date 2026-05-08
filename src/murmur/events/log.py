@@ -30,8 +30,6 @@ if TYPE_CHECKING:
     from murmur.events.types import RuntimeEvent
 
 
-_log: structlog.stdlib.BoundLogger = structlog.get_logger()
-
 _FAILURE_TYPES: frozenset[str] = frozenset(
     {
         "agent_failed",
@@ -51,12 +49,14 @@ class LogEventEmitter:
     """Default :class:`EventEmitter` — writes via structlog.
 
     Stateless and trivially safe to share across runtimes / threads /
-    runs. Construction takes no arguments; the bound logger lives at
-    module scope.
+    runs. Construction takes no arguments; the bound logger is resolved
+    per-call so ``structlog.testing.capture_logs`` can intercept emit
+    output even after the CLI has set ``cache_logger_on_first_use=True``.
     """
 
     async def emit(self, event: RuntimeEvent) -> None:
-        method = _log.aerror if event.event_type.value in _FAILURE_TYPES else _log.ainfo
+        log = structlog.get_logger()
+        method = log.aerror if event.event_type.value in _FAILURE_TYPES else log.ainfo
         # Last-resort guard: a custom structlog processor pipeline that
         # raises must not take an agent run down with it.
         with contextlib.suppress(Exception):  # pragma: no cover
