@@ -53,6 +53,7 @@ class Worker:
         runtime: AgentRuntime | None = None,
         concurrency: int = 10,
         prefetch: int = 5,
+        consumer_id: str | None = None,
         signing_key: bytes | tuple[bytes, ...] | None = None,
     ) -> None:
         if not agents:
@@ -117,6 +118,17 @@ class Worker:
         self._runtime: AgentRuntime = runtime
         self._concurrency = concurrency
         self._prefetch = prefetch
+        # Stable broker-side consumer name. Defaults to the worker
+        # runtime's id so that operators who pin a stable ``runtime_id``
+        # (the production pattern) automatically get stable Redis Stream
+        # consumer names — pending entries are reclaimed on restart and
+        # ``XINFO GROUPS`` consumer count stays bounded by fleet size.
+        # Operators who want a different binding (e.g. a k8s pod name)
+        # can override; ``None`` is forwarded as-is to the broker, which
+        # then falls back to a per-subscription uuid.
+        self._consumer_id: str | None = (
+            consumer_id if consumer_id is not None else self._runtime.runtime_id
+        )
         self._semaphore = asyncio.Semaphore(concurrency)
         self._active: dict[str, asyncio.Task[None]] = {}
 
@@ -173,6 +185,7 @@ class Worker:
                 self._make_handler(agent_name),
                 group=topic,
                 prefetch=self._prefetch,
+                consumer_id=self._consumer_id,
             )
             subscriptions[agent_name] = topic
         self._started = True

@@ -202,6 +202,36 @@ def test_worker_auto_installs_event_bridge_when_runtime_is_default(
     assert len(bridges) == 1
 
 
+def test_worker_consumer_id_defaults_to_runtime_id(echo_agent: Agent) -> None:
+    """Without an explicit ``consumer_id`` the Worker pins its broker-side
+    name to the inner runtime's id. Production deployments that already
+    set a stable ``runtime_id`` then get stable Redis Streams consumer
+    names automatically — pending entries reclaim on restart and the
+    XINFO GROUPS roster stays bounded by fleet size, not restart count.
+    """
+    broker = InMemoryBroker()
+    user_runtime = AgentRuntime(runtime_id="rt-pinned")
+    worker = Worker(
+        broker=broker,
+        agents={echo_agent.name: echo_agent},
+        runtime=user_runtime,
+    )
+    assert worker._consumer_id == "rt-pinned"
+
+
+def test_worker_consumer_id_explicit_override(echo_agent: Agent) -> None:
+    """Operators wanting to bind to a deployment-stable identity (k8s
+    pod name, container id, …) override ``consumer_id`` directly."""
+    broker = InMemoryBroker()
+    worker = Worker(
+        broker=broker,
+        agents={echo_agent.name: echo_agent},
+        runtime=AgentRuntime(runtime_id="rt-x"),
+        consumer_id="pod-abc-3",
+    )
+    assert worker._consumer_id == "pod-abc-3"
+
+
 def test_worker_does_not_mutate_user_supplied_runtime(echo_agent: Agent) -> None:
     """User-supplied runtimes keep their emitter — Worker doesn't auto-wrap.
 

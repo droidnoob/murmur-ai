@@ -141,16 +141,21 @@ class FastStreamBroker:
         *,
         group: str | None = None,
         prefetch: int | None = None,
+        consumer_id: str | None = None,
     ) -> None:
         if not self._started or self._fs_broker is None:
             raise RuntimeError("FastStreamBroker.subscribe called before start()")
-        sub = self._build_subscriber(topic, group, prefetch)
+        sub = self._build_subscriber(topic, group, prefetch, consumer_id)
         sub(_wrap_handler(handler))
         await sub.start()
         self._subscriptions.append(sub)
 
     def _build_subscriber(
-        self, topic: str, group: str | None, prefetch: int | None
+        self,
+        topic: str,
+        group: str | None,
+        prefetch: int | None,
+        consumer_id: str | None,
     ) -> Any:
         """Construct a FastStream subscriber matching ``group`` semantics.
 
@@ -196,13 +201,18 @@ class FastStreamBroker:
                     else StreamSub(topic)
                 )
                 return broker.subscriber(stream=stream)
-            # Consumer name must be unique per subscriber inside the group;
-            # the group itself is shared across the fleet.
+            # Consumer name must be unique inside the group. A stable
+            # ``consumer_id`` lets the same Worker reclaim its pending
+            # entries on restart and keeps ``XINFO GROUPS`` consumer
+            # count bounded by fleet size; ``None`` falls back to a
+            # random uuid (leaks pending entries if the subscriber dies
+            # without acking — caller's responsibility).
+            consumer = consumer_id if consumer_id is not None else uuid.uuid4().hex
             return broker.subscriber(
                 stream=StreamSub(
                     topic,
                     group=group,
-                    consumer=uuid.uuid4().hex,
+                    consumer=consumer,
                     max_records=prefetch,
                 ),
             )

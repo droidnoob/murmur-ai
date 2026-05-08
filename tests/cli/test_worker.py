@@ -175,6 +175,7 @@ async def test_worker_starts_then_shuts_down_on_sigterm(tmp_path: Path) -> None:
         specs=tmp_path,
         concurrency=4,
         prefetch=2,
+        consumer_id=None,
     )
 
     async def _trigger_sigterm() -> None:
@@ -207,6 +208,7 @@ def test_all_from_registers_every_agent(
         specs=tmp_path,
         concurrency=2,
         prefetch=1,
+        consumer_id=None,
     )
 
     async def _trigger_sigterm() -> None:

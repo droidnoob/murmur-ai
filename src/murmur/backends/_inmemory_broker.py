@@ -84,13 +84,15 @@ class InMemoryBroker:
         *,
         group: str | None = None,
         prefetch: int | None = None,
+        consumer_id: str | None = None,
     ) -> None:
         # ``prefetch`` is a no-op here — InMemoryBroker dispatches one
         # message per ``publish`` call already, so per-poll batch size
-        # has nothing to bound. Accept the kwarg to satisfy the Protocol
-        # so production code paths don't need a separate code branch
-        # when targeting in-memory.
-        del prefetch
+        # has nothing to bound. ``consumer_id`` likewise has no role
+        # without a persistent stream / pending-entries list. Accept
+        # the kwargs to satisfy the Protocol so production code paths
+        # don't need a separate code branch when targeting in-memory.
+        del prefetch, consumer_id
         if group is None:
             self._broadcast[topic].append(handler)
             return

@@ -253,3 +253,99 @@ async def test_redis_multi_worker_competing_consumer(
     assert len(set(flat)) == 12
     # And every Worker handled at least one task — load actually distributed.
     assert all(len(b) > 0 for b in seen.values()), seen
+
+
+async def test_redis_stable_consumer_id_bounds_xinfo_groups(
+    redis_broker: FastStreamBroker,
+) -> None:
+    """Repeated Worker start/stop cycles with a stable ``consumer_id``
+    do not grow the consumer roster on the Redis Streams group.
+
+    Regression for unbounded PEL accumulation: the old wrapper minted a
+    fresh uuid4 consumer name on every subscribe, so every Worker
+    restart added a new consumer to ``XINFO GROUPS``. With a stable
+    ``consumer_id`` (default = runtime id), restart reuses the slot.
+    """
+    from redis.asyncio import Redis
+
+    from murmur.backends._faststream_broker import FastStreamBroker as _Broker
+
+    agent = _agent()
+    redis_url = redis_broker.url
+
+    # Each iteration spins a fresh broker wrapper connected to the same
+    # Redis server. ``Worker.stop()`` tears down its broker connection,
+    # so we can't reuse one wrapper across iterations — but the
+    # server-side group + consumer roster persist regardless. Five
+    # churns with the same ``consumer_id`` should leave exactly one
+    # consumer in the group's roster.
+    for _ in range(5):
+        broker = _Broker(scheme="redis", url=redis_url)
+        publisher = AgentRuntime(broker_instance=broker, runtime_id="rt-pin")
+        worker = Worker(
+            broker=broker,
+            agents={agent.name: agent},
+            runtime=_worker_runtime(),
+            consumer_id="pinned-pod-1",
+        )
+        await worker.start()
+        try:
+            result = await publisher.run(agent, TaskSpec(input="hi"))
+            assert result.is_ok()
+        finally:
+            await worker.stop()
+
+    # Ask the server directly via a clean redis-asyncio client.
+    client: Redis = Redis.from_url(redis_url, decode_responses=True)
+    try:
+        groups = await client.xinfo_groups("murmur.echo.tasks")
+    finally:
+        await client.aclose()
+
+    assert len(groups) == 1
+    [group] = groups
+    # Exactly one consumer slot, despite 5 restart cycles.
+    assert group["consumers"] == 1, group
+
+
+async def test_redis_uuid_consumer_id_leaks_xinfo_groups(
+    redis_broker: FastStreamBroker,
+) -> None:
+    """Mirror of the stable-id test — proves the contract bites both
+    ways. Three Worker churns each minting a fresh ``consumer_id``
+    leave three (now-stale) consumers on the group. This is the
+    behaviour the stable-id default fixes.
+    """
+    from redis.asyncio import Redis
+
+    from murmur.backends._faststream_broker import FastStreamBroker as _Broker
+
+    agent = _agent()
+    redis_url = redis_broker.url
+    for i in range(3):
+        broker = _Broker(scheme="redis", url=redis_url)
+        publisher = AgentRuntime(broker_instance=broker, runtime_id=f"rt-leak-{i}")
+        worker = Worker(
+            broker=broker,
+            agents={agent.name: agent},
+            runtime=_worker_runtime(),
+            consumer_id=f"leaky-pod-{i}",
+        )
+        await worker.start()
+        try:
+            result = await publisher.run(agent, TaskSpec(input="hi"))
+            assert result.is_ok()
+        finally:
+            await worker.stop()
+
+    client: Redis = Redis.from_url(redis_url, decode_responses=True)
+    try:
+        groups = await client.xinfo_groups("murmur.echo.tasks")
+    finally:
+        await client.aclose()
+    assert len(groups) == 1
+    [group] = groups
+    # Three distinct consumer ids, three slots — bounded by *fleet size*,
+    # not restart count, but only because each id was unique. This pins
+    # the operator contract: stable id <=> bounded roster.
+    assert group["consumers"] == 3, group

@@ -47,6 +47,7 @@ class Broker(Protocol):
         *,
         group: str | None = None,
         prefetch: int | None = None,
+        consumer_id: str | None = None,
     ) -> None:
         """Register ``handler`` for messages on ``topic``.
 
@@ -85,6 +86,18 @@ class Broker(Protocol):
           ``channel.set_qos`` for Rabbit.
 
         ``None`` (default) lets the underlying broker pick.
+
+        ``consumer_id`` (when not ``None``) names this subscriber inside
+        its competing-consumer pool. Currently effective on Redis only —
+        the value becomes the ``StreamSub.consumer`` name. A **stable**
+        ``consumer_id`` across Worker restarts lets the consumer reclaim
+        its own pending entry list (PEL) on the next poll cycle, and
+        keeps ``XINFO GROUPS`` consumer count bounded by the size of the
+        deployed fleet rather than the cumulative restart count. ``None``
+        falls back to a per-subscription ``uuid4`` — safe for short-lived
+        scripts, leaky for production. Other brokers ignore the field
+        today (Kafka identifies via ``group_id`` + partition assignment,
+        NATS by queue group membership, Rabbit by channel).
         """
         ...
 

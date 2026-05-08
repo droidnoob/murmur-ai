@@ -61,6 +61,19 @@ def register_worker(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     start.add_argument("--concurrency", type=int, default=10)
     start.add_argument("--prefetch", type=int, default=5)
     start.add_argument(
+        "--consumer-id",
+        type=str,
+        default=None,
+        help=(
+            "Stable broker-side consumer name for this Worker. Currently "
+            "honoured on Redis (becomes the Streams consumer name). "
+            "Pin this to a deployment-stable value (e.g. a k8s pod name) "
+            "so restarts reclaim their pending entries and ``XINFO GROUPS`` "
+            "consumer count stays bounded by fleet size. Defaults to the "
+            "worker runtime id."
+        ),
+    )
+    start.add_argument(
         "--reload",
         action="store_true",
         help=(
@@ -196,6 +209,7 @@ async def _run_worker(args: argparse.Namespace) -> int:
         runtime=worker_runtime,
         concurrency=args.concurrency,
         prefetch=args.prefetch,
+        consumer_id=args.consumer_id,
     )
 
     stop_event = asyncio.Event()

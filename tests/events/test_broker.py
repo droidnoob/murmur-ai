@@ -158,6 +158,7 @@ class _ExplodingBroker:
         *,
         group: str | None = None,
         prefetch: int | None = None,
+        consumer_id: str | None = None,
     ) -> None:  # pragma: no cover
         return None
 

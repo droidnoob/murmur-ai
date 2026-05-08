@@ -131,6 +131,49 @@ A worker process that dies mid-task is recovered by the broker's
 redelivery semantics — another worker eventually picks the task up
 (the agent author owns idempotency).
 
+### Stable consumer identity (Redis)
+
+`Worker(consumer_id=...)` pins the broker-side consumer name. On Redis
+Streams this is the value passed to the consumer group as `consumer=`.
+Setting it to a deployment-stable identifier — a Kubernetes pod name,
+a container id, anything that survives a Worker restart — gives you
+two guarantees:
+
+1. **Restart reclaims its own pending entries.** Redis remembers which
+   stream entries each consumer is holding (the per-consumer PEL).
+   When a Worker restarts under the same id, its next `XREADGROUP`
+   sees those entries again — no operator intervention.
+2. **`XINFO GROUPS` consumer count stays bounded by fleet size.** Every
+   restart of a Worker named `pod-3` reuses one slot; without a stable
+   id, every restart creates a fresh `<uuid>` consumer that never gets
+   reaped, and the roster grows without limit.
+
+Default: `consumer_id` falls back to the worker runtime's `runtime_id`.
+If you set a stable `runtime_id` already (the production pattern), you
+get stable consumer names for free. Override only when you want the
+binding to track something else (e.g. a pod name distinct from the
+runtime id).
+
+```python
+worker = Worker(
+    broker=broker,
+    agents={"researcher": researcher},
+    consumer_id=os.environ["HOSTNAME"],  # k8s pod name
+)
+```
+
+CLI: `murmur worker start --consumer-id pod-abc-3 …`.
+
+The other broker schemes ignore `consumer_id` today — Kafka identifies
+consumers via `group_id` + partition assignment, NATS by queue group
+membership, RabbitMQ at the channel level. Redis is the one where
+operator-supplied consumer names are load-bearing.
+
+If a Worker dies and is replaced by a *different* one (different
+`consumer_id`), the dead consumer's pending entries strand on the
+group's PEL until manually claimed. A future change will wire
+`XAUTOCLAIM` so the live fleet absorbs them automatically.
+
 `prefetch=` (default `5`) is the fan-out fairness knob, but its
 effective semantics depend on the broker:
 
