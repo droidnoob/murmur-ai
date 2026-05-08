@@ -157,6 +157,7 @@ class _ExplodingBroker:
         handler: Any,
         *,
         group: str | None = None,
+        prefetch: int | None = None,
     ) -> None:  # pragma: no cover
         return None
 

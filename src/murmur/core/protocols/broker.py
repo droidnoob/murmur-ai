@@ -46,6 +46,7 @@ class Broker(Protocol):
         handler: MessageHandler,
         *,
         group: str | None = None,
+        prefetch: int | None = None,
     ) -> None:
         """Register ``handler`` for messages on ``topic``.
 
@@ -67,6 +68,13 @@ class Broker(Protocol):
         Subscriptions persist until :meth:`stop` is called — there is no
         per-subscription unsubscribe in this Protocol; restart the broker
         if you need to fully reset.
+
+        ``prefetch`` (when not ``None``) caps how many messages this
+        subscriber pulls per poll — Redis Streams ``max_records``, Kafka
+        ``max_records``, NATS ``pending_msgs_limit``, RabbitMQ channel
+        ``prefetch_count``. Lower values give tighter fan-out fairness
+        across a Worker fleet at the cost of an extra round-trip per
+        message. ``None`` (default) lets the underlying broker pick.
         """
         ...
 

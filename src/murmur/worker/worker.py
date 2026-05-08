@@ -162,8 +162,17 @@ class Worker:
             # Without the group, Redis pub-sub / per-process Kafka groups /
             # NATS without queue groups all broadcast, which triples LLM
             # cost and produces orphan results on the publisher.
+            #
+            # ``prefetch`` caps how many messages this subscriber claims
+            # per poll. Lower values give tighter fan-out fairness across
+            # the fleet at the cost of more broker round-trips; higher
+            # values favour throughput. ``prefetch=1`` is the choice when
+            # one worker shouldn't hog a burst.
             await self._broker.subscribe(
-                topic, self._make_handler(agent_name), group=topic
+                topic,
+                self._make_handler(agent_name),
+                group=topic,
+                prefetch=self._prefetch,
             )
             subscriptions[agent_name] = topic
         self._started = True

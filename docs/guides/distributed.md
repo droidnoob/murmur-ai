@@ -131,6 +131,14 @@ A worker process that dies mid-task is recovered by the broker's
 redelivery semantics — another worker eventually picks the task up
 (the agent author owns idempotency).
 
+`prefetch=` (default `5`) caps how many messages each Worker claims
+per broker poll. It maps to Redis Streams `max_records`, Kafka
+`max_records`, NATS `pending_msgs_limit`, and a RabbitMQ channel
+`prefetch_count`. Lower values give tighter fan-out fairness across
+the fleet at the cost of more broker round-trips; higher values favour
+throughput when one worker greedily draining a burst is fine. Set
+`prefetch=1` for the most uniform distribution.
+
 ## Lifecycle hooks
 
 ```python

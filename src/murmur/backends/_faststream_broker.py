@@ -140,15 +140,18 @@ class FastStreamBroker:
         handler: MessageHandler,
         *,
         group: str | None = None,
+        prefetch: int | None = None,
     ) -> None:
         if not self._started or self._fs_broker is None:
             raise RuntimeError("FastStreamBroker.subscribe called before start()")
-        sub = self._build_subscriber(topic, group)
+        sub = self._build_subscriber(topic, group, prefetch)
         sub(_wrap_handler(handler))
         await sub.start()
         self._subscriptions.append(sub)
 
-    def _build_subscriber(self, topic: str, group: str | None) -> Any:
+    def _build_subscriber(
+        self, topic: str, group: str | None, prefetch: int | None
+    ) -> Any:
         """Construct a FastStream subscriber matching ``group`` semantics.
 
         ``group=None`` keeps the per-broker default (Pub/Sub channel for
@@ -170,35 +173,60 @@ class FastStreamBroker:
         # — used for runtime-id-scoped reply topics that only ever have
         # one subscriber anyway). With a group, FastStream wires a Redis
         # Streams consumer group so multiple subscribers compete.
+        # ``prefetch`` caps how many messages this subscriber claims per
+        # poll. Lower values give tighter fan-out fairness across a Worker
+        # fleet at the cost of more broker round-trips; higher values
+        # favour throughput. The per-scheme knob differs but the intent
+        # is the same.
         if self._scheme == "redis":
             from faststream.redis import StreamSub
 
             if group is None:
-                return broker.subscriber(stream=StreamSub(topic))
+                stream = (
+                    StreamSub(topic, max_records=prefetch)
+                    if prefetch is not None
+                    else StreamSub(topic)
+                )
+                return broker.subscriber(stream=stream)
             # Consumer name must be unique per subscriber inside the group;
             # the group itself is shared across the fleet.
             return broker.subscriber(
-                stream=StreamSub(topic, group=group, consumer=uuid.uuid4().hex),
+                stream=StreamSub(
+                    topic,
+                    group=group,
+                    consumer=uuid.uuid4().hex,
+                    max_records=prefetch,
+                ),
             )
 
-        if group is None:
-            return broker.subscriber(topic)
-
         if self._scheme == "kafka":
-            return broker.subscriber(topic, group_id=group)
+            kwargs: dict[str, Any] = {}
+            if group is not None:
+                kwargs["group_id"] = group
+            if prefetch is not None:
+                kwargs["max_records"] = prefetch
+            return broker.subscriber(topic, **kwargs)
         if self._scheme == "nats":
-            return broker.subscriber(topic, queue=group)
+            kwargs = {}
+            if group is not None:
+                kwargs["queue"] = group
+            if prefetch is not None:
+                kwargs["pending_msgs_limit"] = prefetch
+            return broker.subscriber(topic, **kwargs)
         # RabbitMQ: ``broker.subscriber(topic)`` declares a queue named
         # ``topic`` and binds it to the default exchange — multiple
         # consumers attaching to that same queue compete for messages
         # natively (AMQP basic.consume). The ``group`` parameter has no
-        # additional effect beyond what the default already provides, so
-        # we use the same call as the broadcast branch. Note: Rabbit is
-        # therefore *always* competing-consumer in this wrapper. That's
-        # fine for current production callers — every broadcast use
-        # (``ResultCollector`` reply topic, ``JobBackend`` events relay)
-        # is per-runtime-id and only ever has one subscriber.
-        return broker.subscriber(topic)
+        # additional effect beyond what the default already provides;
+        # ``prefetch`` flows through ``consume_args`` as the channel's
+        # ``prefetch_count`` (basic.qos). Rabbit is therefore *always*
+        # competing-consumer in this wrapper, which is fine — every
+        # broadcast use (reply topic, events relay) is per-runtime-id
+        # and only ever has one subscriber.
+        kwargs = {}
+        if prefetch is not None:
+            kwargs["consume_args"] = {"prefetch_count": prefetch}
+        return broker.subscriber(topic, **kwargs)
 
     # ------------------------------------------------------------------ helpers
 
