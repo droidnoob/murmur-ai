@@ -23,6 +23,7 @@ import signal
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -32,6 +33,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from murmur.core.errors import RegistryError
+from murmur.events.store.usage import UsageReport
 from murmur.runs import (
     InMemoryRunStore,
     RunEvent,
@@ -40,6 +42,8 @@ from murmur.runs import (
     RunStatus,
 )
 from murmur.server.errors import ErrorResponse
+from murmur.server.runs_page import RunsPage, assemble_runs_page
+from murmur.server.stats import StatsResponse, build_stats
 from murmur.types import AgentResult, GroupResult, TaskSpec
 
 if TYPE_CHECKING:
@@ -47,6 +51,7 @@ if TYPE_CHECKING:
     from typing import Literal
 
     from murmur.agent import Agent
+    from murmur.core.protocols.event_store import EventStore
     from murmur.events.sse import SSEEventEmitter
     from murmur.groups.spec import AgentGroup
     from murmur.mcp_server import MCPEnrollment
@@ -97,6 +102,8 @@ class AgentServer:
         run_store: RunStore | None = None,
         drain_timeout: float = 30.0,
         sse_emitter: SSEEventEmitter | None = None,
+        dashboard_dir: Path | None = None,
+        event_store: EventStore | None = None,
     ) -> None:
         from murmur.runtime import AgentRuntime as _AgentRuntime
 
@@ -113,6 +120,14 @@ class AgentServer:
         # ``None`` to opt out — embedded mounts that don't want a public
         # event firehose just leave this off.
         self._sse_emitter: SSEEventEmitter | None = sse_emitter
+        # Opt-in static-bundle mount for the read-only dashboard. Off by
+        # default — operators must pass an explicit directory containing
+        # ``index.html`` to expose it.
+        self._dashboard_dir: Path | None = dashboard_dir
+        # Optional persistent EventStore. When set, the server adds
+        # ``GET /runs``, ``GET /runs/{trace_id}``, and ``GET /events``
+        # routes that read from the store.
+        self._event_store: EventStore | None = event_store
         # MCP exposure is opt-in at two levels: ``register_mcp`` enrolls a
         # specific agent; ``serve_mcp`` activates the surface. ``register``
         # alone (HTTP-only) does NOT touch this dict, so an agent registered
@@ -276,6 +291,19 @@ class AgentServer:
         app = FastAPI(lifespan=_lifespan)
         app.include_router(self._build_routes())
         AgentRouter.install_exception_handlers(app)
+
+        if self._dashboard_dir is not None:
+            from fastapi.staticfiles import StaticFiles
+
+            # ``html=True`` serves index.html for the directory root and
+            # falls through 404s to it — sufficient for the current
+            # single-page bundle. Mounted at ``/dashboard`` so API routes
+            # remain at the server root.
+            app.mount(
+                "/dashboard",
+                StaticFiles(directory=str(self._dashboard_dir), html=True),
+                name="dashboard",
+            )
 
         # ---------- shutdown guard (server-only — not on the router) ----------
         # Order: middleware added LAST runs OUTERMOST in FastAPI. We want
@@ -493,6 +521,122 @@ class AgentServer:
 
             _ = stream_events  # decorator does the wiring
 
+        # ---------- persistent event store (dashboard history) ----------
+
+        if self._event_store is not None:
+            event_store = self._event_store
+
+            @router.get("/runs")
+            async def list_runs(
+                limit: int = 50,
+                offset: int = 0,
+                status: str | None = None,
+            ) -> RunsPage:
+                """Paginated, summary-folded top-level runs.
+
+                Returns one page of runs (newest first) plus the total
+                count for the current filter so the History tab can render
+                an accurate "X-Y of N" counter and disable the next-page
+                button at the boundary. ``status`` accepts
+                ``spawned|running|completed|failed|rejected``.
+                """
+                from murmur.server.runs_page import parse_run_status
+
+                parsed = None if status is None else parse_run_status(status)
+                if status is not None and parsed is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "status must be one of "
+                            "spawned|running|completed|failed|rejected, "
+                            f"got {status!r}"
+                        ),
+                    )
+                limit = max(1, min(limit, 500))
+                offset = max(0, offset)
+                return await assemble_runs_page(
+                    event_store, limit=limit, offset=offset, status=parsed
+                )
+
+            @router.get("/runs/{trace_id}/tree")
+            async def get_run_tree(trace_id: str) -> list[dict[str, object]]:
+                """Cascading-spawn tree for one root, oldest-first events."""
+                events = await event_store.tree(trace_id)
+                if not events:
+                    raise HTTPException(
+                        status_code=404, detail=f"trace_id {trace_id!r} not found"
+                    )
+                return [_event_to_dict(e) for e in events]
+
+            @router.get("/events")
+            async def query_events(
+                trace_id: str | None = None,
+                event_type: str | None = None,
+                since: str | None = None,
+                until: str | None = None,
+                limit: int = 200,
+            ) -> list[dict[str, object]]:
+                """Filtered event scan, newest-first."""
+                from murmur.events.types import EventType as _EventType
+
+                event_types = (
+                    [_EventType(event_type)] if event_type is not None else None
+                )
+                rows = await event_store.query(
+                    since=_parse_iso(since),
+                    until=_parse_iso(until),
+                    trace_id=trace_id,
+                    event_types=event_types,
+                    limit=limit,
+                )
+                return [_event_to_dict(e) for e in rows]
+
+            @router.get("/usage")
+            async def get_usage(
+                group_by: str = "agent",
+                since: str | None = None,
+                until: str | None = None,
+            ) -> UsageReport:
+                """Token-usage rollup over AGENT_COMPLETED events.
+
+                ``group_by`` ∈ ``{"agent", "trace", "none"}``. Reads up
+                to 100k rows from the store per request; clients that
+                need bigger windows should pass ``since``/``until`` to
+                narrow the scan.
+                """
+                from murmur.events.store.usage import (
+                    compute_usage,
+                    parse_group_by,
+                )
+
+                parsed = parse_group_by(group_by)
+                if parsed is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(f"group_by must be agent|trace|none, got {group_by!r}"),
+                    )
+                events = await event_store.query(
+                    since=_parse_iso(since),
+                    until=_parse_iso(until),
+                    limit=100_000,
+                )
+                return compute_usage(events, group_by=parsed)
+
+            @router.get("/runtime/stats")
+            async def get_runtime_stats() -> StatsResponse:
+                """Composite runtime + dashboard rollup. One call covers
+                the header meters, Health tab, burn rate, rejection
+                breakdown, MCP server table, and worker fleet placeholder."""
+                events = await event_store.query(limit=100_000)
+                return build_stats(
+                    runtime=self._runtime,
+                    events=events,
+                    sse_active=self._sse_emitter is not None,
+                    mcp_enrollments=self._mcp_enrollments.values(),
+                )
+
+            _ = list_runs, get_run_tree, query_events, get_usage, get_runtime_stats
+
         @router.post("/runs/{run_id}/cancel")
         async def cancel_run(run_id: str) -> dict[str, str]:
             status = await self._run_store.get_status(run_id)
@@ -676,6 +820,33 @@ def _registered_names(
     agents: Iterable[Agent],
 ) -> Sequence[str]:  # pragma: no cover — debug helper
     return tuple(a.name for a in agents)
+
+
+def _parse_iso(value: str | None) -> Any:
+    """Parse an ISO-8601 timestamp; return ``None`` for ``None`` input.
+
+    Returns Any to keep the route signatures importable without binding
+    ``datetime`` here (avoids a needless top-level import for a helper
+    used by three handlers).
+    """
+    from datetime import datetime as _dt
+
+    if value is None:
+        return None
+    return _dt.fromisoformat(value)
+
+
+def _event_to_dict(event: Any) -> dict[str, object]:
+    """JSON-friendly view of a :class:`RuntimeEvent`."""
+    return {
+        "event_type": event.event_type.value,
+        "timestamp": event.timestamp.isoformat(),
+        "agent_name": event.agent_name,
+        "task_id": event.task_id,
+        "trace_id": event.trace_id,
+        "parent_trace_id": event.parent_trace_id,
+        "payload": dict(event.payload),
+    }
 
 
 __all__ = ["AgentServer"]

@@ -57,7 +57,13 @@ from pydantic import BaseModel
 
 from murmur.core.errors import AllAgentsFailedError, SpecValidationError, TopologyError
 from murmur.groups._introspection import get_fan_out_field
-from murmur.types import AgentResult, GroupResult, ResultMetadata, TaskSpec
+from murmur.types import (
+    AgentContext,
+    AgentResult,
+    GroupResult,
+    ResultMetadata,
+    TaskSpec,
+)
 
 if TYPE_CHECKING:
     from murmur.agent import Agent
@@ -99,35 +105,69 @@ async def run_group(
     incoming: dict[Agent, list[tuple[Agent, Edge]]] = _incoming_edges(group)
     skipped: set[Agent] = set()
 
-    for tier in tiers:
-        if len(tier) == 1:
-            # Fast path — preserves zero-overhead dispatch for linear DAGs.
-            await _walk_one(
-                node=tier[0],
+    # After the entry tier runs, install a spawn frame keyed on the entry
+    # node so observability events fired by downstream tiers carry
+    # ``parent_trace_id == entry.trace_id``. Without this, every group
+    # node looks like a top-level run in the dashboard and the cascading
+    # tree visualisation degenerates to a forest of singletons.
+    #
+    # Skip when:
+    # - the entry tier has more than one node (no single root to attribute
+    #   children to);
+    # - or an outer spawn frame is already active — the group is itself a
+    #   nested cascade, and the existing invariant (siblings see only the
+    #   outer caller as ancestor, never each other) takes precedence.
+    from murmur.runtime import _current_spawn, _SpawnFrame
+
+    entry_frame_token: object | None = None
+    outer_frame_present = _current_spawn.get() is not None
+    entry_node: Agent | None = (
+        tiers[0][0]
+        if tiers and len(tiers[0]) == 1 and not outer_frame_present
+        else None
+    )
+
+    try:
+        for tier_index, tier in enumerate(tiers):
+            if tier_index == 1 and entry_frame_token is None and entry_node is not None:
+                entry_frame_token = _current_spawn.set(
+                    _SpawnFrame(
+                        agent_name=entry_node.name,
+                        agent_context=AgentContext(),
+                        trace_id=task.request_id,
+                    )
+                )
+            if len(tier) == 1:
+                # Fast path — preserves zero-overhead dispatch for linear DAGs.
+                await _walk_one(
+                    node=tier[0],
+                    runtime=runtime,
+                    task=task,
+                    incoming=incoming,
+                    results=results,
+                    skipped=skipped,
+                )
+                continue
+
+            # Tier with N>=2 sibling nodes (no inter-tier dependencies, by
+            # construction of topological_tiers). Dispatch concurrently with
+            # fail-fast cancellation — see ``_dispatch_tier_parallel``.
+            tier_outputs = await _dispatch_tier_parallel(
+                tier=tier,
                 runtime=runtime,
                 task=task,
                 incoming=incoming,
                 results=results,
                 skipped=skipped,
             )
-            continue
-
-        # Tier with N>=2 sibling nodes (no inter-tier dependencies, by
-        # construction of topological_tiers). Dispatch concurrently with
-        # fail-fast cancellation — see ``_dispatch_tier_parallel``.
-        tier_outputs = await _dispatch_tier_parallel(
-            tier=tier,
-            runtime=runtime,
-            task=task,
-            incoming=incoming,
-            results=results,
-            skipped=skipped,
-        )
-        for node, dispatched in zip(tier, tier_outputs, strict=True):
-            if isinstance(dispatched, _Skipped):
-                skipped.add(node)
-            else:
-                results[node] = dispatched
+            for node, dispatched in zip(tier, tier_outputs, strict=True):
+                if isinstance(dispatched, _Skipped):
+                    skipped.add(node)
+                else:
+                    results[node] = dispatched
+    finally:
+        if entry_frame_token is not None:
+            _current_spawn.reset(entry_frame_token)  # ty: ignore[invalid-argument-type]
 
     fired_terminals = [t for t in terminals if t in results]
     if not fired_terminals:

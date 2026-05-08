@@ -9,6 +9,7 @@ real LLM.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -465,3 +466,292 @@ async def test_events_stream_heartbeats_when_idle(echo_agent: Agent) -> None:
         await sub.aclose()
 
     assert frame == {"event": "ping", "data": ""}
+
+
+# ---------------------------------------------------------------------------
+# Dashboard mount (opt-in)
+# ---------------------------------------------------------------------------
+
+
+async def test_dashboard_mount_serves_index(tmp_path: Path) -> None:
+    """When --dashboard-dir is set, GET /dashboard/ returns the bundle's
+    index.html. Off by default — test below."""
+    bundle = tmp_path / "dist"
+    bundle.mkdir()
+    (bundle / "index.html").write_text("<!doctype html><title>m</title>")
+    (bundle / "assets").mkdir()
+    (bundle / "assets" / "app.js").write_text("// bundle")
+
+    runtime = AgentRuntime(backend=AsyncBackend())
+    s = AgentServer(runtime=runtime, dashboard_dir=bundle)
+
+    transport = httpx.ASGITransport(app=s.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/dashboard/")
+        assert r.status_code == 200
+        assert "<title>m</title>" in r.text
+        r = await c.get("/dashboard/assets/app.js")
+        assert r.status_code == 200
+        assert r.text == "// bundle"
+
+
+async def test_dashboard_unmounted_by_default() -> None:
+    """No /dashboard route when dashboard_dir is None."""
+    runtime = AgentRuntime(backend=AsyncBackend())
+    s = AgentServer(runtime=runtime)
+
+    transport = httpx.ASGITransport(app=s.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/dashboard/")
+        assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# EventStore-backed routes (opt-in)
+# ---------------------------------------------------------------------------
+
+
+async def test_event_store_routes_assembled_tree() -> None:
+    """When event_store is wired, /runs and /runs/{id}/tree return persisted events."""
+    from murmur.events.store import InMemoryEventStore
+    from murmur.events.types import EventType, RuntimeEvent
+
+    store = InMemoryEventStore()
+    await store.append(
+        RuntimeEvent(
+            event_type=EventType.AGENT_SPAWNED,
+            agent_name="root-agent",
+            trace_id="root-1",
+            payload={"backend": "thread", "trust_level": "high"},
+        )
+    )
+    await store.append(
+        RuntimeEvent(
+            event_type=EventType.AGENT_SPAWNED,
+            agent_name="child-agent",
+            trace_id="child-1",
+            parent_trace_id="root-1",
+            payload={"backend": "thread", "trust_level": "high"},
+        )
+    )
+    runtime = AgentRuntime(backend=AsyncBackend())
+    s = AgentServer(runtime=runtime, event_store=store)
+
+    transport = httpx.ASGITransport(app=s.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/runs")
+        assert r.status_code == 200
+        page = r.json()
+        assert page["total"] == 1
+        assert page["limit"] == 50
+        assert page["offset"] == 0
+        assert [row["trace_id"] for row in page["rows"]] == ["root-1"]
+
+        r = await c.get("/runs/root-1/tree")
+        assert r.status_code == 200
+        ids = {row["trace_id"] for row in r.json()}
+        assert ids == {"root-1", "child-1"}
+
+        r = await c.get("/runs/nonexistent/tree")
+        assert r.status_code == 404
+
+
+async def test_event_store_routes_unmounted_by_default() -> None:
+    runtime = AgentRuntime(backend=AsyncBackend())
+    s = AgentServer(runtime=runtime)
+
+    transport = httpx.ASGITransport(app=s.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/runs")
+        assert r.status_code == 404
+
+
+async def test_usage_endpoint_groups_by_agent() -> None:
+    from murmur.events.store import InMemoryEventStore
+    from murmur.events.types import EventType, RuntimeEvent
+
+    store = InMemoryEventStore()
+    for agent, tokens in [("a", 100), ("b", 50), ("a", 25)]:
+        await store.append(
+            RuntimeEvent(
+                event_type=EventType.AGENT_COMPLETED,
+                agent_name=agent,
+                trace_id=f"t-{agent}-{tokens}",
+                payload={"tokens_used": tokens, "backend": "thread", "duration_ms": 1},
+            )
+        )
+    runtime = AgentRuntime(backend=AsyncBackend())
+    s = AgentServer(runtime=runtime, event_store=store)
+
+    transport = httpx.ASGITransport(app=s.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/usage", params={"group_by": "agent"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["totals"] == {"tokens_used": 175, "events": 3}
+        keys = {row["key"]: row["tokens_used"] for row in body["groups"]}
+        assert keys == {"a": 125, "b": 50}
+
+        r = await c.get("/usage", params={"group_by": "bogus"})
+        assert r.status_code == 400
+
+
+async def test_broker_relayed_events_land_in_event_store() -> None:
+    """End-to-end: a wire RuntimeEvent published on the broker events
+    topic flows through the JobBackend subscriber → MultiEventEmitter
+    → StoreEventEmitter → EventStore.
+
+    Confirms ``murmur serve --broker URL --publish-events --event-store=…``
+    captures fleet-wide events without any extra wiring beyond what's
+    already in cli/serve.py."""
+    from murmur.backends._inmemory_broker import InMemoryBroker
+    from murmur.events import LogEventEmitter, MultiEventEmitter
+    from murmur.events.store import InMemoryEventStore, StoreEventEmitter
+    from murmur.events.types import EventType, RuntimeEvent
+    from murmur.messages import events_topic
+    from murmur.runtime import AgentRuntime
+
+    store = InMemoryEventStore()
+    emitter = MultiEventEmitter([LogEventEmitter(), StoreEventEmitter(store)])
+
+    from murmur.backends.job import JobBackend
+
+    broker = InMemoryBroker()
+    runtime = AgentRuntime(
+        broker_instance=broker, event_emitter=emitter, publish_events=True
+    )
+    backend = runtime.backend
+    assert isinstance(backend, JobBackend)
+    # Trigger backend.start() so the events-topic subscriber is registered.
+    await backend.start()
+
+    wire = RuntimeEvent(
+        event_type=EventType.AGENT_COMPLETED,
+        agent_name="worker-agent",
+        trace_id="wire-trace",
+        payload={"backend": "job", "tokens_used": 4242, "duration_ms": 1500},
+    )
+    await broker.publish(
+        events_topic(runtime._runtime_id),
+        wire.model_dump_json().encode(),
+    )
+
+    # InMemoryBroker dispatches synchronously inside publish(); a single
+    # event-loop yield is enough for the awaited handler to settle.
+    import asyncio
+
+    for _ in range(20):
+        rows = await store.query(trace_id="wire-trace")
+        if rows:
+            break
+        await asyncio.sleep(0.01)
+
+    rows = await store.query(trace_id="wire-trace")
+    assert len(rows) == 1
+    assert rows[0].agent_name == "worker-agent"
+    assert rows[0].payload["tokens_used"] == 4242
+
+    await backend.stop()
+
+
+async def test_runs_endpoint_paginates_with_offset_and_limit() -> None:
+    """`GET /runs?limit=&offset=` returns a page + accurate total."""
+    from datetime import UTC, datetime, timedelta
+
+    from murmur.events.store import InMemoryEventStore
+    from murmur.events.types import EventType, RuntimeEvent
+
+    store = InMemoryEventStore()
+    base = datetime.now(tz=UTC)
+    for i in range(7):
+        await store.append(
+            RuntimeEvent(
+                event_type=EventType.AGENT_SPAWNED,
+                agent_name=f"agent-{i}",
+                trace_id=f"trace-{i}",
+                timestamp=base + timedelta(seconds=i),
+                payload={"backend": "thread", "trust_level": "high"},
+            )
+        )
+
+    runtime = AgentRuntime(backend=AsyncBackend())
+    s = AgentServer(runtime=runtime, event_store=store)
+
+    transport = httpx.ASGITransport(app=s.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/runs", params={"limit": 3, "offset": 0})
+        assert r.status_code == 200
+        page = r.json()
+        assert page["total"] == 7
+        assert page["limit"] == 3
+        assert page["offset"] == 0
+        # Newest-first: trace-6, trace-5, trace-4.
+        assert [row["trace_id"] for row in page["rows"]] == [
+            "trace-6",
+            "trace-5",
+            "trace-4",
+        ]
+
+        r = await c.get("/runs", params={"limit": 3, "offset": 3})
+        page = r.json()
+        assert [row["trace_id"] for row in page["rows"]] == [
+            "trace-3",
+            "trace-2",
+            "trace-1",
+        ]
+
+        r = await c.get("/runs", params={"limit": 3, "offset": 6})
+        page = r.json()
+        assert [row["trace_id"] for row in page["rows"]] == ["trace-0"]
+
+
+async def test_runs_endpoint_filters_by_status() -> None:
+    """`GET /runs?status=completed` filters server-side."""
+    from datetime import UTC, datetime, timedelta
+
+    from murmur.events.store import InMemoryEventStore
+    from murmur.events.types import EventType, RuntimeEvent
+
+    store = InMemoryEventStore()
+    base = datetime.now(tz=UTC)
+    # trace-running: spawned only; trace-done: spawned + completed.
+    await store.append(
+        RuntimeEvent(
+            event_type=EventType.AGENT_SPAWNED,
+            agent_name="r",
+            trace_id="trace-running",
+            timestamp=base,
+            payload={"backend": "thread", "trust_level": "high"},
+        )
+    )
+    await store.append(
+        RuntimeEvent(
+            event_type=EventType.AGENT_SPAWNED,
+            agent_name="d",
+            trace_id="trace-done",
+            timestamp=base + timedelta(seconds=1),
+            payload={"backend": "thread", "trust_level": "high"},
+        )
+    )
+    await store.append(
+        RuntimeEvent(
+            event_type=EventType.AGENT_COMPLETED,
+            agent_name="d",
+            trace_id="trace-done",
+            timestamp=base + timedelta(seconds=2),
+            payload={"backend": "thread", "duration_ms": 100, "tokens_used": 42},
+        )
+    )
+
+    runtime = AgentRuntime(backend=AsyncBackend())
+    s = AgentServer(runtime=runtime, event_store=store)
+    transport = httpx.ASGITransport(app=s.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/runs", params={"status": "completed"})
+        page = r.json()
+        assert [row["trace_id"] for row in page["rows"]] == ["trace-done"]
+        r = await c.get("/runs", params={"status": "running"})
+        page = r.json()
+        assert [row["trace_id"] for row in page["rows"]] == ["trace-running"]
+        r = await c.get("/runs", params={"status": "bogus"})
+        assert r.status_code == 400

@@ -77,7 +77,7 @@ class ResultCollector:
         self,
         *,
         batch_id: str,
-        timeout: float | None = None,
+        timeout: float | None = None,  # noqa: ASYNC109 — domain-specific batch deadline, not a wrapper around asyncio.timeout
     ) -> list[ResultMessage | None]:
         """Await ``register``-ed batch.
 
@@ -109,7 +109,7 @@ class ResultCollector:
         self,
         *,
         batch_id: str,
-        timeout: float | None = None,
+        timeout: float | None = None,  # noqa: ASYNC109 — see gather_batch
     ) -> ResultMessage | None:
         """Single-task convenience. Returns the one envelope or ``None`` on timeout."""
         slots = await self.gather_batch(batch_id=batch_id, timeout=timeout)

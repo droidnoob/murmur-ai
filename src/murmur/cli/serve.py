@@ -102,6 +102,29 @@ def register_serve(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> 
         help="Disable the GET /events/stream endpoint entirely.",
     )
     p.add_argument(
+        "--dashboard-dir",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Mount a built dashboard static bundle at /dashboard. Pass the "
+            "directory containing index.html (e.g. packages/dashboard/dist). "
+            "Off by default — exposure is opt-in."
+        ),
+    )
+    p.add_argument(
+        "--event-store",
+        default=None,
+        metavar="PATH_OR_MEMORY",
+        help=(
+            "Persist RuntimeEvents for the dashboard. Pass a SQLite path "
+            "(events.db) for durable history, or 'memory' for an in-process "
+            "ring. Adds GET /runs, /runs/{id}/tree, /events, /usage. Off by "
+            "default. Combine with --broker --publish-events to also capture "
+            "worker-fleet events relayed through the broker bridge."
+        ),
+    )
+    p.add_argument(
         "--reload",
         action="store_true",
         help=(
@@ -196,16 +219,35 @@ async def _run_serve(args: argparse.Namespace) -> int:
 
     # Lazy imports — keep `murmur run` / `murmur validate` startup lean and
     # avoid pulling FastAPI / uvicorn / sse-starlette in for every CLI use.
+    from murmur.core.protocols.event_store import EventStore
+    from murmur.core.protocols.events import EventEmitter
     from murmur.events import LogEventEmitter, MultiEventEmitter, SSEEventEmitter
     from murmur.runtime import AgentRuntime
     from murmur.server.app import AgentServer
 
     sse_emitter: SSEEventEmitter | None = None
+    sinks: list[EventEmitter] = [LogEventEmitter()]
     if not args.no_events:
         sse_emitter = SSEEventEmitter(heartbeat_interval=args.heartbeat_interval)
-        emitter = MultiEventEmitter([LogEventEmitter(), sse_emitter])
-    else:
-        emitter = MultiEventEmitter([LogEventEmitter()])
+        sinks.append(sse_emitter)
+
+    event_store: EventStore | None = None
+    if args.event_store is not None:
+        from murmur.events.store import (
+            InMemoryEventStore,
+            SQLiteEventStore,
+            StoreEventEmitter,
+        )
+
+        if args.event_store == "memory":
+            event_store = InMemoryEventStore()
+        else:
+            sqlite_store = SQLiteEventStore(path=args.event_store)
+            await sqlite_store.start_pruning()
+            event_store = sqlite_store
+        sinks.append(StoreEventEmitter(event_store))
+
+    emitter = MultiEventEmitter(sinks)
 
     try:
         runtime = AgentRuntime(
@@ -217,7 +259,24 @@ async def _run_serve(args: argparse.Namespace) -> int:
         print(f"[error] {exc}", file=sys.stderr)
         return 2
 
-    server = AgentServer(runtime=runtime, sse_emitter=sse_emitter)
+    dashboard_dir: Path | None = args.dashboard_dir
+    # Startup-time existence check before binding the server — sync I/O is fine here.
+    if dashboard_dir is not None and (
+        not dashboard_dir.is_dir()  # noqa: ASYNC240
+        or not (dashboard_dir / "index.html").is_file()  # noqa: ASYNC240
+    ):
+        print(
+            f"[error] --dashboard-dir {dashboard_dir} does not contain index.html",
+            file=sys.stderr,
+        )
+        return 2
+
+    server = AgentServer(
+        runtime=runtime,
+        sse_emitter=sse_emitter,
+        dashboard_dir=dashboard_dir,
+        event_store=event_store,
+    )
     for agent in agents.values():
         server.register(agent)
 
@@ -229,6 +288,8 @@ async def _run_serve(args: argparse.Namespace) -> int:
         publish_events=args.publish_events,
         agents=sorted(agents),
         events_endpoint=("/events/stream" if sse_emitter is not None else None),
+        dashboard=str(dashboard_dir) if dashboard_dir is not None else None,
+        event_store=args.event_store,
     )
     await server.serve(host=args.host, port=args.port)
     return 0

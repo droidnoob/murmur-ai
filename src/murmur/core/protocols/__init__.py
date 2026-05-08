@@ -8,6 +8,7 @@ every implementation runs the same shared contract suite.
 from murmur.core.protocols.backend import Backend, BackendStatus
 from murmur.core.protocols.broker import Broker, MessageHandler
 from murmur.core.protocols.context import ContextPasser
+from murmur.core.protocols.event_store import EventStore
 from murmur.core.protocols.events import EventEmitter
 from murmur.core.protocols.pipeline import Middleware, NextStage, Pipeline, Stage
 from murmur.core.protocols.registry import Registry
@@ -22,6 +23,7 @@ __all__ = [
     "Broker",
     "ContextPasser",
     "EventEmitter",
+    "EventStore",
     "MessageHandler",
     "Middleware",
     "NextStage",
