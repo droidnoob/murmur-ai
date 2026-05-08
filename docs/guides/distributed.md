@@ -131,13 +131,21 @@ A worker process that dies mid-task is recovered by the broker's
 redelivery semantics — another worker eventually picks the task up
 (the agent author owns idempotency).
 
-`prefetch=` (default `5`) caps how many messages each Worker claims
-per broker poll. It maps to Redis Streams `max_records`, Kafka
-`max_records`, NATS `pending_msgs_limit`, and a RabbitMQ channel
-`prefetch_count`. Lower values give tighter fan-out fairness across
-the fleet at the cost of more broker round-trips; higher values favour
-throughput when one worker greedily draining a burst is fine. Set
-`prefetch=1` for the most uniform distribution.
+`prefetch=` (default `5`) is the fan-out fairness knob, but its
+effective semantics depend on the broker:
+
+- **Redis** — true per-poll batch cap (Redis Streams `max_records`).
+  `prefetch=1` gives the most uniform distribution across the fleet
+  at the cost of an extra round-trip per task; higher values favour
+  throughput when one worker greedily draining a burst is fine.
+- **NATS** — bounds the in-flight backpressure window
+  (`pending_msgs_limit`), not per-poll batch size. One busy subscriber
+  can still hold all slots while peers idle.
+- **Kafka, RabbitMQ** — currently a no-op. FastStream's Kafka
+  `DefaultSubscriber` ignores `max_records`, and AMQP channel QoS
+  lives on a different call than the wrapper currently exposes.
+  Track and tune throughput at the broker for now; a future change
+  will switch Kafka to batch mode and wire `channel.set_qos` for Rabbit.
 
 ## Lifecycle hooks
 

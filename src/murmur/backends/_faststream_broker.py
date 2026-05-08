@@ -173,11 +173,19 @@ class FastStreamBroker:
         # — used for runtime-id-scoped reply topics that only ever have
         # one subscriber anyway). With a group, FastStream wires a Redis
         # Streams consumer group so multiple subscribers compete.
-        # ``prefetch`` caps how many messages this subscriber claims per
-        # poll. Lower values give tighter fan-out fairness across a Worker
-        # fleet at the cost of more broker round-trips; higher values
-        # favour throughput. The per-scheme knob differs but the intent
-        # is the same.
+        # ``prefetch`` semantics vary sharply by broker. Today it is fully
+        # effective on Redis only (StreamSub ``max_records`` — actual
+        # per-poll batch cap). On NATS it maps to ``pending_msgs_limit``
+        # which is an in-flight backpressure cap, *not* a per-poll batch
+        # — different semantic, but the closest available knob, so we
+        # forward it and document the mismatch on the Worker. Kafka's
+        # ``max_records`` only fires inside the batch-subscriber path
+        # (FastStream's ``DefaultSubscriber`` ignores it), and RabbitMQ's
+        # channel QoS lives on a different API than the wrapper exposes
+        # (``channel.set_qos`` rather than ``consume(arguments=...)``);
+        # rather than ship a knob that silently does nothing, we no-op
+        # ``prefetch`` on those two and let a future change implement
+        # them properly via batch mode / pre-consume QoS.
         if self._scheme == "redis":
             from faststream.redis import StreamSub
 
@@ -200,14 +208,14 @@ class FastStreamBroker:
             )
 
         if self._scheme == "kafka":
-            kwargs: dict[str, Any] = {}
+            # ``max_records`` is intentionally NOT forwarded — it is only
+            # honoured by FastStream's ``BatchSubscriber``, and Worker
+            # subscribes in single-message mode. See module docstring.
             if group is not None:
-                kwargs["group_id"] = group
-            if prefetch is not None:
-                kwargs["max_records"] = prefetch
-            return broker.subscriber(topic, **kwargs)
+                return broker.subscriber(topic, group_id=group)
+            return broker.subscriber(topic)
         if self._scheme == "nats":
-            kwargs = {}
+            kwargs: dict[str, Any] = {}
             if group is not None:
                 kwargs["queue"] = group
             if prefetch is not None:
@@ -217,16 +225,12 @@ class FastStreamBroker:
         # ``topic`` and binds it to the default exchange — multiple
         # consumers attaching to that same queue compete for messages
         # natively (AMQP basic.consume). The ``group`` parameter has no
-        # additional effect beyond what the default already provides;
-        # ``prefetch`` flows through ``consume_args`` as the channel's
-        # ``prefetch_count`` (basic.qos). Rabbit is therefore *always*
-        # competing-consumer in this wrapper, which is fine — every
-        # broadcast use (reply topic, events relay) is per-runtime-id
-        # and only ever has one subscriber.
-        kwargs = {}
-        if prefetch is not None:
-            kwargs["consume_args"] = {"prefetch_count": prefetch}
-        return broker.subscriber(topic, **kwargs)
+        # additional effect beyond what the default already provides.
+        # ``prefetch`` is intentionally not forwarded: channel QoS lives
+        # on ``channel.set_qos(prefetch_count=...)``, not on
+        # ``consume(arguments=...)`` (which is for AMQP consumer-tag
+        # arguments). A future change can wire QoS in before consume.
+        return broker.subscriber(topic)
 
     # ------------------------------------------------------------------ helpers
 

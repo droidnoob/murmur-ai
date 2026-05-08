@@ -69,12 +69,22 @@ class Broker(Protocol):
         per-subscription unsubscribe in this Protocol; restart the broker
         if you need to fully reset.
 
-        ``prefetch`` (when not ``None``) caps how many messages this
-        subscriber pulls per poll — Redis Streams ``max_records``, Kafka
-        ``max_records``, NATS ``pending_msgs_limit``, RabbitMQ channel
-        ``prefetch_count``. Lower values give tighter fan-out fairness
-        across a Worker fleet at the cost of an extra round-trip per
-        message. ``None`` (default) lets the underlying broker pick.
+        ``prefetch`` (when not ``None``) bounds how many messages this
+        subscriber holds at once. **Effective semantics differ by broker:**
+
+        - Redis: forwarded to ``StreamSub(max_records=...)`` — true
+          per-poll batch cap. ``prefetch=1`` gives the most uniform
+          fan-out across a Worker fleet.
+        - NATS: forwarded to ``pending_msgs_limit`` — in-flight backpressure
+          cap, not per-poll batch. Bounds buffer size before the server
+          stops pushing.
+        - Kafka, RabbitMQ: currently a no-op. FastStream's Kafka
+          ``DefaultSubscriber`` ignores ``max_records``, and AMQP channel
+          QoS lives on a different API than the wrapper exposes. Future
+          change will switch Kafka to batch mode and call
+          ``channel.set_qos`` for Rabbit.
+
+        ``None`` (default) lets the underlying broker pick.
         """
         ...
 

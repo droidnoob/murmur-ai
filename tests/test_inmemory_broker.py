@@ -96,6 +96,13 @@ async def test_competing_consumer_group_routes_to_one_handler() -> None:
     each published message reaches exactly one handler in the pool, not
     every handler. Without this, multi-Worker fan-out triples LLM cost
     and produces orphan results.
+
+    Asserts the *delivery* invariants only: every published message
+    lands in exactly one handler in the pool, no duplicates, no losses.
+    Real brokers (Redis Streams, Kafka consumer groups, NATS queues)
+    distribute by first-come-first-served, not round-robin — pinning
+    exact per-handler counts here would test the in-memory implementation
+    detail rather than the contract every concrete must honour.
     """
     broker = InMemoryBroker()
     received_a: list[bytes] = []
@@ -119,12 +126,12 @@ async def test_competing_consumer_group_routes_to_one_handler() -> None:
         await broker.publish("workers", f"msg-{i}".encode())
     for _ in range(8):
         await asyncio.sleep(0)
-    # Round-robin → each handler gets exactly two, no duplicates.
-    assert len(received_a) == 2
-    assert len(received_b) == 2
-    assert len(received_c) == 2
+    # Each message landed in exactly one handler.
     union = sorted(received_a + received_b + received_c)
     assert union == [f"msg-{i}".encode() for i in range(6)]
+    # No handler saw a duplicate.
+    for bucket in (received_a, received_b, received_c):
+        assert len(bucket) == len(set(bucket))
     await broker.stop()
 
 
@@ -154,9 +161,12 @@ async def test_broadcast_and_competing_consumer_coexist() -> None:
         await broker.publish("t", f"m{i}".encode())
     for _ in range(6):
         await asyncio.sleep(0)
-    # Observer sees every message; pool members each see two (round-robin).
-    assert len(seen_broadcast) == 4
-    assert len(seen_pool) == 4
+    # Observer sees every message exactly once.
+    assert sorted(seen_broadcast) == [f"m{i}".encode() for i in range(4)]
+    # Pool delivered every message exactly once across its members,
+    # without duplicates.
+    pool_payloads = sorted(p for _, p in seen_pool)
+    assert pool_payloads == [f"m{i}".encode() for i in range(4)]
     await broker.stop()
 
 
