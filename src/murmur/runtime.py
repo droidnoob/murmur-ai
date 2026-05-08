@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict
 
 from murmur._sync import reject_if_in_event_loop
-from murmur.backends._faststream_broker import FastStreamBroker
+from murmur.backends._brokers import make_broker
 from murmur.backends._inmemory_broker import InMemoryBroker
 from murmur.backends.async_backend import AsyncBackend
 from murmur.backends.job import JobBackend
@@ -1118,7 +1118,7 @@ class AgentRuntime:
     def _build_broker(*, scheme: str, url: str) -> Broker:
         if scheme == "memory":
             return InMemoryBroker()
-        return FastStreamBroker(scheme=scheme, url=url)
+        return make_broker(scheme=scheme, url=url)
 
 
 __all__ = ["AgentRuntime"]

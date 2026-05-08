@@ -70,6 +70,18 @@ def register_worker(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         ),
     )
     start.add_argument(
+        "--reclaim-min-idle-ms",
+        type=int,
+        default=30_000,
+        help=(
+            "Redis Streams: reclaim entries idle in another consumer's PEL "
+            "for at least this many ms (XAUTOCLAIM). Recovers tasks orphaned "
+            "by a Worker that died without ACKing and was replaced by a peer "
+            "with a different consumer_id. Set to 0 to disable. No-op on "
+            "Kafka/NATS/Rabbit. Default: 30000 (30s)."
+        ),
+    )
+    start.add_argument(
         "--consumer-id",
         type=str,
         default=None,
@@ -220,6 +232,7 @@ async def _run_worker(args: argparse.Namespace) -> int:
         prefetch=args.prefetch,
         consumer_id=args.consumer_id,
         heartbeat_seconds=args.heartbeat_seconds,
+        reclaim_min_idle_ms=args.reclaim_min_idle_ms or None,
     )
 
     stop_event = asyncio.Event()

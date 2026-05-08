@@ -2,7 +2,7 @@
 
 The handler runs the agent through an in-process runtime; we don't
 actually exercise FastStream's broker — that's covered by
-``tests/backends/test_faststream_broker.py`` and the user's own
+``tests/backends/test_brokers.py`` and the user's own
 integration. Here we just verify the adapter returns a callable that
 dispatches correctly.
 """

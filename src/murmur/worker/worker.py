@@ -57,6 +57,7 @@ class Worker:
         consumer_id: str | None = None,
         signing_key: bytes | tuple[bytes, ...] | None = None,
         heartbeat_seconds: float = 30.0,
+        reclaim_min_idle_ms: int | None = 30_000,
     ) -> None:
         if not agents:
             raise SpecValidationError("Worker requires at least one agent")
@@ -66,6 +67,10 @@ class Worker:
             raise SpecValidationError("prefetch must be >= 1")
         if heartbeat_seconds < 0:
             raise SpecValidationError("heartbeat_seconds must be >= 0 (0 disables)")
+        if reclaim_min_idle_ms is not None and reclaim_min_idle_ms < 0:
+            raise SpecValidationError(
+                "reclaim_min_idle_ms must be >= 0 (None or 0 disables)"
+            )
         # Normalise signing_key to a tuple; ``None`` means "verification
         # disabled, broker is trusted" (default — unchanged behaviour).
         # A tuple supports key rotation: stamp new workers with
@@ -142,6 +147,7 @@ class Worker:
         self._started: bool = False
         self._heartbeat_seconds: float = float(heartbeat_seconds)
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._reclaim_min_idle_ms: int | None = reclaim_min_idle_ms
 
     # ------------------------------------------------------------------ hooks
 
@@ -166,7 +172,7 @@ class Worker:
         stderr) plus a structured ``worker_started`` event that includes
         the per-agent task topics, broker scheme + URL, and concurrency.
         FastStream's own subscriber chatter is silenced upstream in
-        :class:`murmur.backends.FastStreamBroker`.
+        :func:`murmur.backends._brokers.make_broker`.
         """
         if self._started:
             return
@@ -192,6 +198,7 @@ class Worker:
                 group=topic,
                 prefetch=self._prefetch,
                 consumer_id=self._consumer_id,
+                reclaim_min_idle_ms=self._reclaim_min_idle_ms,
             )
             subscriptions[agent_name] = topic
         self._started = True
@@ -461,7 +468,7 @@ class Worker:
 def _broker_repr(broker: Broker) -> str:
     """Best-effort human-readable broker description for the banner.
 
-    :class:`FastStreamBroker` exposes ``scheme`` + ``url`` so we render
+    the broker concrete exposes ``scheme`` + ``url`` so we render
     the original URL the user passed. The in-memory broker has neither;
     we render ``memory://`` to match the URL scheme that constructs it.
     """

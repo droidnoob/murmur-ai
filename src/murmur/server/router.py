@@ -155,8 +155,8 @@ class AgentRouter(APIRouter):
         For "bring your own broker" (the user already has a configured
         FastStream broker in their app), pass it through to the runtime via
         the existing ``AgentRuntime(broker_instance=...)`` kwarg — wrap the
-        FastStream broker in :class:`murmur.backends._faststream_broker.\
-FastStreamBroker` (the ``_fs_broker=`` constructor seam).
+        inner broker via :func:`murmur.backends._brokers.make_broker` (the
+        ``_fs_broker=`` constructor seam).
         """
         # Lazy imports — keep module load lean and avoid circulars.
         from murmur.backends.job import JobBackend
@@ -165,8 +165,8 @@ FastStreamBroker` (the ``_fs_broker=`` constructor seam).
         backend = runtime.backend
         if not isinstance(backend, JobBackend):
             return None
-        # The four FastStream concretes all expose ``fs_broker`` (via the
-        # shared ``_FastStreamSchemeMixin``); the in-memory broker doesn't.
+        # The four broker concretes all expose ``fs_broker`` (via the
+        # shared ``_BrokerProps`` mixin); the in-memory broker doesn't.
         # ``getattr`` with a default keeps this scheme-agnostic — if a
         # future broker concrete also exposes ``fs_broker``, we surface it.
         inner_broker = getattr(backend, "broker", None)

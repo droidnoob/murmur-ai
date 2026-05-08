@@ -1,4 +1,4 @@
-"""Real-broker integration tests for ``FastStreamBroker``.
+"""Real-broker integration tests for the broker concretes.
 
 Same shape as ``test_faststream_pipeline.py`` but spins up *actual*
 Kafka / NATS / RabbitMQ / Redis containers via ``testcontainers``
@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends._faststream_broker import FastStreamBroker, FastStreamBrokerType
+from murmur.backends._brokers import BackedBroker, make_broker
 from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.runtime import AgentRuntime
@@ -108,7 +108,7 @@ def _agent() -> Agent:
 # ---------------------------------------------------------------------------
 
 
-async def _round_trip(broker: FastStreamBrokerType) -> None:
+async def _round_trip(broker: BackedBroker) -> None:
     """Single agent run from publisher → broker → worker → publisher."""
     agent = _agent()
     publisher = AgentRuntime(broker_instance=broker, runtime_id="rt-real")
@@ -129,7 +129,7 @@ async def _round_trip(broker: FastStreamBrokerType) -> None:
 
 
 @pytest.fixture
-async def kafka_broker() -> AsyncIterator[FastStreamBrokerType]:
+async def kafka_broker() -> AsyncIterator[BackedBroker]:
     """Kafka container. Note: requires ``docker pull confluentinc/cp-kafka:7.6.0``
     (~1GB) on first run — testcontainers will pull automatically when
     available, but a reliable CI run should warm the local cache."""
@@ -137,24 +137,24 @@ async def kafka_broker() -> AsyncIterator[FastStreamBrokerType]:
 
     with KafkaContainer() as container:
         url = container.get_bootstrap_server()
-        broker = FastStreamBroker(scheme="kafka", url=url)
+        broker = make_broker(scheme="kafka", url=url)
         yield broker
         # ``broker`` lifecycle (start/stop) is driven by the test via
         # ``Worker`` / ``JobBackend`` — no extra cleanup needed here.
 
 
 @pytest.fixture
-async def nats_broker() -> AsyncIterator[FastStreamBrokerType]:
+async def nats_broker() -> AsyncIterator[BackedBroker]:
     from testcontainers.nats import NatsContainer
 
     with NatsContainer() as container:
         url = container.nats_uri()
-        broker = FastStreamBroker(scheme="nats", url=url)
+        broker = make_broker(scheme="nats", url=url)
         yield broker
 
 
 @pytest.fixture
-async def rabbit_broker() -> AsyncIterator[FastStreamBrokerType]:
+async def rabbit_broker() -> AsyncIterator[BackedBroker]:
     """RabbitMQ container — pinned to 3.12 because newer RabbitMQ rejects
     ``transient_nonexcl_queues`` by default and FastStream's ``pika``-driven
     AMQP client trips that deprecation. Fix forward when FastStream's
@@ -165,19 +165,19 @@ async def rabbit_broker() -> AsyncIterator[FastStreamBrokerType]:
         host = container.get_container_host_ip()
         port = container.get_exposed_port(5672)
         url = f"amqp://guest:guest@{host}:{port}"
-        broker = FastStreamBroker(scheme="amqp", url=url)
+        broker = make_broker(scheme="amqp", url=url)
         yield broker
 
 
 @pytest.fixture
-async def redis_broker() -> AsyncIterator[FastStreamBrokerType]:
+async def redis_broker() -> AsyncIterator[BackedBroker]:
     from testcontainers.redis import RedisContainer
 
     with RedisContainer() as container:
         host = container.get_container_host_ip()
         port = container.get_exposed_port(6379)
         url = f"redis://{host}:{port}"
-        broker = FastStreamBroker(scheme="redis", url=url)
+        broker = make_broker(scheme="redis", url=url)
         yield broker
 
 
@@ -186,24 +186,24 @@ async def redis_broker() -> AsyncIterator[FastStreamBrokerType]:
 # ---------------------------------------------------------------------------
 
 
-async def test_kafka_round_trip(kafka_broker: FastStreamBrokerType) -> None:
+async def test_kafka_round_trip(kafka_broker: BackedBroker) -> None:
     await _round_trip(kafka_broker)
 
 
-async def test_nats_round_trip(nats_broker: FastStreamBrokerType) -> None:
+async def test_nats_round_trip(nats_broker: BackedBroker) -> None:
     await _round_trip(nats_broker)
 
 
-async def test_rabbitmq_round_trip(rabbit_broker: FastStreamBrokerType) -> None:
+async def test_rabbitmq_round_trip(rabbit_broker: BackedBroker) -> None:
     await _round_trip(rabbit_broker)
 
 
-async def test_redis_round_trip(redis_broker: FastStreamBrokerType) -> None:
+async def test_redis_round_trip(redis_broker: BackedBroker) -> None:
     await _round_trip(redis_broker)
 
 
 async def test_redis_multi_worker_competing_consumer(
-    redis_broker: FastStreamBrokerType,
+    redis_broker: BackedBroker,
 ) -> None:
     """Multiple Workers on the same Redis URL must compete for tasks, not
     broadcast. Regression for the bug where every Worker received every
@@ -256,7 +256,7 @@ async def test_redis_multi_worker_competing_consumer(
 
 
 async def test_redis_stable_consumer_id_bounds_xinfo_groups(
-    redis_broker: FastStreamBrokerType,
+    redis_broker: BackedBroker,
 ) -> None:
     """Repeated Worker start/stop cycles with a stable ``consumer_id``
     do not grow the consumer roster on the Redis Streams group.
@@ -268,7 +268,7 @@ async def test_redis_stable_consumer_id_bounds_xinfo_groups(
     """
     from redis.asyncio import Redis
 
-    from murmur.backends._faststream_broker import FastStreamBroker as _Broker
+    from murmur.backends._brokers import make_broker as _Broker
 
     agent = _agent()
     redis_url = redis_broker.url
@@ -309,7 +309,7 @@ async def test_redis_stable_consumer_id_bounds_xinfo_groups(
 
 
 async def test_redis_uuid_consumer_id_leaks_xinfo_groups(
-    redis_broker: FastStreamBrokerType,
+    redis_broker: BackedBroker,
 ) -> None:
     """Mirror of the stable-id test — proves the contract bites both
     ways. Three Worker churns each minting a fresh ``consumer_id``
@@ -318,7 +318,7 @@ async def test_redis_uuid_consumer_id_leaks_xinfo_groups(
     """
     from redis.asyncio import Redis
 
-    from murmur.backends._faststream_broker import FastStreamBroker as _Broker
+    from murmur.backends._brokers import make_broker as _Broker
 
     agent = _agent()
     redis_url = redis_broker.url
@@ -349,3 +349,81 @@ async def test_redis_uuid_consumer_id_leaks_xinfo_groups(
     # not restart count, but only because each id was unique. This pins
     # the operator contract: stable id <=> bounded roster.
     assert group["consumers"] == 3, group
+
+
+async def test_redis_abandoned_pel_reclaimed_by_replacement_worker(
+    redis_broker: BackedBroker,
+) -> None:
+    """Worker A owns a task, dies before XACK, is replaced by Worker B
+    with a different ``consumer_id``. With the reclaim sidecar enabled
+    (``reclaim_min_idle_ms``), Worker B picks up the orphaned entry
+    within the configured idle window — exactly what 42i was about.
+    """
+    import asyncio
+
+    from redis.asyncio import Redis
+
+    from murmur.backends._brokers import make_broker as _Broker
+
+    agent = _agent()
+    redis_url = redis_broker.url
+
+    # Stage 1: Worker A claims a task but is killed before the handler
+    # finishes. We block A's dispatch via a backend that never returns.
+    blocker = asyncio.Event()
+
+    class _BlockingBackend(AsyncBackend):
+        async def spawn(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+            await blocker.wait()
+            raise RuntimeError("unreachable")
+
+    broker_a = _Broker(scheme="redis", url=redis_url)
+    runtime_a = AgentRuntime(backend=_BlockingBackend())
+    worker_a = Worker(
+        broker=broker_a,
+        agents={agent.name: agent},
+        runtime=runtime_a,
+        consumer_id="pod-a",
+        heartbeat_seconds=0,
+        reclaim_min_idle_ms=0,  # A never reclaims; B will.
+    )
+    await worker_a.start()
+
+    publisher = AgentRuntime(broker_instance=broker_a, runtime_id="rt-reclaim")
+    publish_task = asyncio.create_task(
+        publisher.run(agent, TaskSpec(input="orphan-me"))
+    )
+    # Let A claim the entry into its PEL.
+    await asyncio.sleep(0.5)
+
+    # Tear A down without ACKing. Releasing ``blocker`` lets the hung
+    # spawn raise (path A drops it as a failure on the local side), but
+    # the server-side PEL entry is still owned by ``pod-a`` until B
+    # XAUTOCLAIMs it.
+    blocker.set()
+    await worker_a.stop()
+
+    redis_client: Redis = Redis.from_url(redis_url, decode_responses=True)
+    try:
+        pel_a = await redis_client.xpending("murmur.echo.tasks", "murmur.echo.tasks")
+    finally:
+        await redis_client.aclose()
+    assert pel_a["pending"] >= 1, pel_a
+
+    # Stage 2: Worker B with a SHORT reclaim threshold. Real broker so
+    # XAUTOCLAIM actually fires.
+    broker_b = _Broker(scheme="redis", url=redis_url)
+    worker_b = Worker(
+        broker=broker_b,
+        agents={agent.name: agent},
+        runtime=_worker_runtime(),
+        consumer_id="pod-b",
+        heartbeat_seconds=0,
+        reclaim_min_idle_ms=200,
+    )
+    await worker_b.start()
+    try:
+        result = await asyncio.wait_for(publish_task, timeout=10.0)
+    finally:
+        await worker_b.stop()
+    assert result.is_ok()

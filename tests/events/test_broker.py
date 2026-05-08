@@ -159,6 +159,7 @@ class _ExplodingBroker:
         group: str | None = None,
         prefetch: int | None = None,
         consumer_id: str | None = None,
+        reclaim_min_idle_ms: int | None = None,
     ) -> None:  # pragma: no cover
         return None
 

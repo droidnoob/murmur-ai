@@ -169,10 +169,40 @@ consumers via `group_id` + partition assignment, NATS by queue group
 membership, RabbitMQ at the channel level. Redis is the one where
 operator-supplied consumer names are load-bearing.
 
-If a Worker dies and is replaced by a *different* one (different
-`consumer_id`), the dead consumer's pending entries strand on the
-group's PEL until manually claimed. A future change will wire
-`XAUTOCLAIM` so the live fleet absorbs them automatically.
+### Reclaiming abandoned PEL entries
+
+If a Worker dies after claiming a task but before `XACK`, the entry
+sits on its PEL forever — unless something reclaims it. Same-`consumer_id`
+restart picks up its own PEL automatically (above), but a *different*
+replacement (different `consumer_id`, e.g. a fresh k8s pod) won't.
+
+Set `Worker(reclaim_min_idle_ms=...)` to enable
+`XAUTOCLAIM`-driven recovery. Default `30_000` (30 s); pass `0` or
+`None` to disable.
+
+```python
+worker = Worker(
+    broker=broker,
+    agents={"researcher": researcher},
+    consumer_id=os.environ["HOSTNAME"],
+    reclaim_min_idle_ms=30_000,  # 30s — claim entries idle longer than this
+)
+```
+
+CLI: `murmur worker start --reclaim-min-idle-ms 30000 …`.
+
+Implementation: the wrapper registers a sidecar Redis Streams subscriber
+in addition to the normal one. The primary subscriber runs
+`XREADGROUP > ...` to pick up new entries; the sidecar runs
+`XAUTOCLAIM` at the configured idle threshold to inherit any peer's
+abandoned entries. Both share the worker's `consumer_id` so reclaimed
+ownership is durable across the live worker's own restarts. The same
+handler dispatches both paths — abandoned entries arrive a few
+seconds later than fresh ones, otherwise indistinguishable.
+
+Other broker schemes ignore `reclaim_min_idle_ms` today — abandoned-
+message recovery is broker-specific (Kafka offsets vs. NATS pending vs.
+Rabbit unacked-message redelivery on channel close all behave differently).
 
 `prefetch=` (default `5`) is the fan-out fairness knob, but its
 effective semantics depend on the broker:

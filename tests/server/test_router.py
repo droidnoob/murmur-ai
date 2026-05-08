@@ -222,11 +222,11 @@ def test_broker_returns_none_for_in_memory_broker() -> None:
     assert router.broker is None
 
 
-def test_broker_returns_faststream_broker_when_url_is_kafka() -> None:
-    """A `kafka://` URL constructs a FastStreamBroker — accessor drills to it.
+def test_broker_returns_brokers_when_url_is_kafka() -> None:
+    """A `kafka://` URL constructs a make_broker — accessor drills to it.
 
     We don't actually connect to Kafka here; we just verify the accessor
-    drills through ``runtime → JobBackend → FastStreamBroker.fs_broker``.
+    drills through ``runtime → JobBackend → broker.fs_broker``.
     The fs_broker is None until ``start()`` builds it lazily — that's the
     expected pre-start shape and proves the path is wired.
     """

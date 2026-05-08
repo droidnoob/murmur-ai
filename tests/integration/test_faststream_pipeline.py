@@ -1,6 +1,6 @@
 """End-to-end research pipeline over each FastStream broker.
 
-Replaces ``InMemoryBroker`` with ``FastStreamBroker`` (Kafka / NATS /
+Replaces ``InMemoryBroker`` with the broker concretes (Kafka / NATS /
 RabbitMQ / Redis) wrapped in FastStream's ``TestBroker`` context — proving
 the full distributed-mode loop works on the real wire format for every
 supported broker. ``runtime.run_group`` → publisher → broker → worker →
@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
-from murmur.backends._faststream_broker import FastStreamBroker
+from murmur.backends._brokers import make_broker
 from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
 from murmur.groups.edge import Edge
@@ -147,7 +147,7 @@ def _rabbit() -> tuple[str, str, Callable[[], Any], Callable[[Any], Any]]:
 
 # NB: Redis is intentionally absent from this in-memory ``TestBroker``
 # parametrize set. Worker subscriptions go through Redis Streams + consumer
-# groups (see ``FastStreamBroker._build_subscriber``) so the fleet competes
+# groups (see ``RedisBroker.subscribe``) so the fleet competes
 # for tasks instead of broadcasting; FastStream's ``TestRedisBroker`` mocks
 # the redis client with ``MagicMock``, which can't await ``xgroup_create``.
 # Real-Redis coverage lives in ``test_real_brokers.py::test_redis_*`` —
@@ -163,14 +163,12 @@ async def pipeline(
     fs_broker = broker_ctor()
 
     async with test_ctor(fs_broker):
-        # Two FastStreamBroker wrappers around the SAME underlying FastStream
+        # Two make_broker wrappers around the SAME underlying FastStream
         # broker — one for the publisher (runtime), one for the worker.
         # FastStream's TestBroker patches the transport so messages move
         # through the same in-memory routing.
-        publisher_broker = FastStreamBroker(
-            scheme=scheme, url=url, _fs_broker=fs_broker
-        )
-        worker_broker = FastStreamBroker(scheme=scheme, url=url, _fs_broker=fs_broker)
+        publisher_broker = make_broker(scheme=scheme, url=url, _fs_broker=fs_broker)
+        worker_broker = make_broker(scheme=scheme, url=url, _fs_broker=fs_broker)
 
         publisher = AgentRuntime(
             broker_instance=publisher_broker,
@@ -211,7 +209,7 @@ async def pipeline(
             await worker.stop()
 
 
-async def test_run_group_round_trips_through_faststream_broker(
+async def test_run_group_round_trips_through_brokers(
     pipeline: tuple[AgentRuntime, AgentGroup],
 ) -> None:
     """head → 10 minions (auto fan-out via FanOut) → summary, over a real

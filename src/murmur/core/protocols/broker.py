@@ -6,9 +6,9 @@ runtime constructs the right concrete internally. The Protocol exists so
 that:
 
 - The single in-memory broker (``backends._inmemory_broker``) and the four
-  FastStream wrappers (``backends._faststream_broker``) all match the same
-  shape — Murmur dispatch logic is broker-agnostic.
-- Tests can inject a fake without pulling in FastStream.
+  transport wrappers (``backends._brokers``) all match the same shape —
+  Murmur dispatch logic is broker-agnostic.
+- Tests can inject a fake without pulling in the implementation library.
 """
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ class Broker(Protocol):
         group: str | None = None,
         prefetch: int | None = None,
         consumer_id: str | None = None,
+        reclaim_min_idle_ms: int | None = None,
     ) -> None:
         """Register ``handler`` for messages on ``topic``.
 
@@ -98,6 +99,20 @@ class Broker(Protocol):
         scripts, leaky for production. Other brokers ignore the field
         today (Kafka identifies via ``group_id`` + partition assignment,
         NATS by queue group membership, Rabbit by channel).
+
+        ``reclaim_min_idle_ms`` (when not ``None`` and ``group`` is set)
+        enables **abandoned-PEL recovery**: entries that have been pending
+        in another consumer's PEL for at least this long get reclaimed by
+        this subscriber and dispatched through ``handler``. Without it, a
+        Worker that dies before ``XACK`` and is replaced by a worker with
+        a different ``consumer_id`` strands its pending entries forever.
+        Effective on Redis only — implemented as a sidecar subscriber that
+        runs ``XAUTOCLAIM`` alongside the normal ``XREADGROUP`` poll, so
+        the same handler processes both new and reclaimed entries; both
+        subscribers share the configured ``consumer_id`` so reclaimed
+        ownership is durable across the live worker's restarts. Other
+        brokers ignore the field. Sensible default for production:
+        ``30_000`` (30 seconds).
         """
         ...
 

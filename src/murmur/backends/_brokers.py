@@ -1,28 +1,34 @@
-"""FastStream-backed broker concretes — one class per scheme.
+"""Broker concretes — one class per transport.
 
-Each scheme — ``kafka://``, ``nats://``, ``amqp://``, ``redis://`` — has
-its own concrete class implementing the :class:`Broker` Protocol with
-honest, scheme-specific behaviour. Lazy imports keep the dependency
-fan-out clean: a user only needs the relevant ``murmur-ai[<scheme>]``
-extra installed to construct that scheme's class.
+Each URL scheme — ``kafka://``, ``nats://``, ``amqp://``, ``redis://`` —
+has its own concrete class implementing the :class:`Broker` Protocol
+with honest, scheme-specific behaviour: :class:`RedisBroker`,
+:class:`KafkaBroker`, :class:`NatsBroker`, :class:`RabbitBroker`. Lazy
+imports keep the dependency fan-out clean — a user only needs the
+relevant ``murmur-ai[<scheme>]`` extra installed to construct that
+scheme's class.
 
-This module is the only place in the package outside :mod:`murmur.interop`
-that imports from :mod:`faststream`. Per CLAUDE.md §2, FastStream is a
-hidden dependency — users never see it.
+The implementation library (FastStream) is deliberately absent from any
+class name. Per CLAUDE.md §2 it's a hidden dependency; the wrappers are
+named after what they ARE (the transport), not what they're built on.
+This module is the only place outside :mod:`murmur.interop` that imports
+from :mod:`faststream`, and FastStream's own broker classes are imported
+under ``_FS*`` aliases to keep the wrapper / inner distinction
+unambiguous in stack traces and grep results.
 
 Design — composition, not inheritance. Each scheme class holds a private
-:class:`_FastStreamCore` that owns the lifecycle state (started flag,
+:class:`_BrokerCore` that owns the lifecycle state (started flag,
 ``_fs_broker`` test seam, subscription bookkeeping). Per CLAUDE.md §13
 ("no inheritance for code reuse — composition only" / "Protocols over
 ABCs"), the four scheme classes are independent and satisfy the Broker
 Protocol structurally. Per-call paths carry zero scheme branching; the
 URL → class dispatch happens once at construction via the
-:func:`FastStreamBroker` factory.
+:func:`make_broker` factory.
 
-Tests inject a FastStream broker via the ``_fs_broker`` constructor arg
-and wrap it with ``faststream.<broker>.TestBroker`` so the full wire
-format is exercised in-memory without Docker. Real-broker integration
-tests (``testcontainers``) cover the production path.
+Tests inject the inner broker via the ``_fs_broker`` constructor arg and
+wrap it with ``faststream.<scheme>.TestBroker`` so the full wire format
+is exercised in-memory without Docker. Real-broker integration tests
+(``testcontainers``) cover the production path.
 """
 
 from __future__ import annotations
@@ -54,7 +60,7 @@ _SCHEME_TO_EXTRA: dict[str, str] = {
 
 
 @dataclass
-class _FastStreamCore:
+class _BrokerCore:
     """Shared lifecycle state composed into each scheme broker.
 
     Owns the ``_fs_broker`` test seam, the started flag, and the
@@ -103,7 +109,7 @@ class _FastStreamCore:
 # ---------------------------------------------------------------------------
 
 
-class _FastStreamSchemeMixin:
+class _BrokerProps:
     """Shared property surface — ``scheme`` / ``url`` / ``fs_broker``.
 
     Not a base class for behaviour. Each concrete inherits *only* the
@@ -113,7 +119,7 @@ class _FastStreamSchemeMixin:
     ``_build_fs_broker``, ``_build_subscriber``) live on each concrete.
     """
 
-    _core: _FastStreamCore
+    _core: _BrokerCore
 
     @property
     def scheme(self) -> str:
@@ -140,7 +146,7 @@ class _FastStreamSchemeMixin:
         return self._core.fs_broker
 
 
-class FastStreamRedisBroker(_FastStreamSchemeMixin):
+class RedisBroker(_BrokerProps):
     """Redis Streams broker — the only scheme with first-class fan-out.
 
     Publishes go to a Redis Stream (``XADD``) so messages persist and
@@ -162,7 +168,7 @@ class FastStreamRedisBroker(_FastStreamSchemeMixin):
     """
 
     def __init__(self, *, url: str, _fs_broker: Any | None = None) -> None:
-        self._core = _FastStreamCore(
+        self._core = _BrokerCore(
             scheme="redis",
             url=url,
             fs_broker=_fs_broker,
@@ -177,7 +183,7 @@ class FastStreamRedisBroker(_FastStreamSchemeMixin):
 
     async def publish(self, topic: str, payload: bytes) -> None:
         if not self._core.started or self._core.fs_broker is None:
-            raise RuntimeError("FastStreamRedisBroker.publish called before start()")
+            raise RuntimeError("RedisBroker.publish called before start()")
         # Stream — not Pub/Sub channel — so messages persist for any
         # consumer group still draining the backlog. Channels would
         # silently drop messages whose subscribers happen to be on
@@ -192,45 +198,78 @@ class FastStreamRedisBroker(_FastStreamSchemeMixin):
         group: str | None = None,
         prefetch: int | None = None,
         consumer_id: str | None = None,
+        reclaim_min_idle_ms: int | None = None,
     ) -> None:
         if not self._core.started or self._core.fs_broker is None:
-            raise RuntimeError("FastStreamRedisBroker.subscribe called before start()")
+            raise RuntimeError("RedisBroker.subscribe called before start()")
         from faststream.redis import StreamSub
 
         if group is None:
+            # ``reclaim_min_idle_ms`` only makes sense with a consumer
+            # group's PEL; ungrouped pub-sub-style streams have nothing
+            # to reclaim from. Silently ignore so callers can pass it
+            # uniformly.
             stream = (
                 StreamSub(topic, max_records=prefetch)
                 if prefetch is not None
                 else StreamSub(topic)
             )
             sub = self._core.fs_broker.subscriber(stream=stream)
-        else:
-            # Stable ``consumer_id`` lets the same Worker reclaim its
-            # pending entries on restart and keeps ``XINFO GROUPS``
-            # consumer count bounded by fleet size; ``None`` falls back
-            # to a random uuid (leaks pending entries if the subscriber
-            # dies without acking — caller's responsibility).
-            consumer = consumer_id if consumer_id is not None else uuid.uuid4().hex
-            sub = self._core.fs_broker.subscriber(
+            sub(_wrap_handler(handler))
+            await sub.start()
+            self._core.subscriptions.append(sub)
+            return
+
+        # Stable ``consumer_id`` lets the same Worker reclaim its
+        # pending entries on restart and keeps ``XINFO GROUPS``
+        # consumer count bounded by fleet size; ``None`` falls back
+        # to a random uuid (leaks pending entries if the subscriber
+        # dies without acking — caller's responsibility).
+        consumer = consumer_id if consumer_id is not None else uuid.uuid4().hex
+        primary = self._core.fs_broker.subscriber(
+            stream=StreamSub(
+                topic,
+                group=group,
+                consumer=consumer,
+                max_records=prefetch,
+            ),
+        )
+        primary(_wrap_handler(handler))
+        await primary.start()
+        self._core.subscriptions.append(primary)
+
+        # Sidecar reclaim subscriber. FastStream's ``StreamSub`` with
+        # ``min_idle_time`` set switches the underlying loop from
+        # ``XREADGROUP > ...`` (read new) to ``XAUTOCLAIM`` (steal idle
+        # entries from peers) — the two modes are mutually exclusive
+        # per subscriber, so we run a second subscriber dedicated to
+        # reclaim. Both share the configured ``consumer`` name so
+        # reclaimed ownership is durable across the live worker's
+        # restarts. The same handler processes both paths; from the
+        # caller's perspective abandoned entries simply arrive a few
+        # seconds later than fresh ones.
+        if reclaim_min_idle_ms is not None and reclaim_min_idle_ms > 0:
+            reclaimer = self._core.fs_broker.subscriber(
                 stream=StreamSub(
                     topic,
                     group=group,
                     consumer=consumer,
                     max_records=prefetch,
+                    min_idle_time=reclaim_min_idle_ms,
                 ),
             )
-        sub(_wrap_handler(handler))
-        await sub.start()
-        self._core.subscriptions.append(sub)
+            reclaimer(_wrap_handler(handler))
+            await reclaimer.start()
+            self._core.subscriptions.append(reclaimer)
 
     def _build_fs_broker(self) -> Any:
         _quiet_underlying_loggers()
-        from faststream.redis import RedisBroker
+        from faststream.redis import RedisBroker as _FSRedisBroker
 
-        return RedisBroker(self._core.url, logger=None)
+        return _FSRedisBroker(self._core.url, logger=None)
 
 
-class FastStreamKafkaBroker(_FastStreamSchemeMixin):
+class KafkaBroker(_BrokerProps):
     """Kafka broker — competing-consumer via consumer ``group_id``.
 
     ``prefetch`` is currently a no-op: ``max_records`` is only honoured
@@ -242,7 +281,7 @@ class FastStreamKafkaBroker(_FastStreamSchemeMixin):
     """
 
     def __init__(self, *, url: str, _fs_broker: Any | None = None) -> None:
-        self._core = _FastStreamCore(
+        self._core = _BrokerCore(
             scheme="kafka",
             url=url,
             fs_broker=_fs_broker,
@@ -257,7 +296,7 @@ class FastStreamKafkaBroker(_FastStreamSchemeMixin):
 
     async def publish(self, topic: str, payload: bytes) -> None:
         if not self._core.started or self._core.fs_broker is None:
-            raise RuntimeError("FastStreamKafkaBroker.publish called before start()")
+            raise RuntimeError("KafkaBroker.publish called before start()")
         await self._core.fs_broker.publish(payload, topic)
 
     async def subscribe(
@@ -268,9 +307,10 @@ class FastStreamKafkaBroker(_FastStreamSchemeMixin):
         group: str | None = None,
         prefetch: int | None = None,  # noqa: ARG002 — see class docstring
         consumer_id: str | None = None,  # noqa: ARG002 — see class docstring
+        reclaim_min_idle_ms: int | None = None,  # noqa: ARG002 — Redis-only
     ) -> None:
         if not self._core.started or self._core.fs_broker is None:
-            raise RuntimeError("FastStreamKafkaBroker.subscribe called before start()")
+            raise RuntimeError("KafkaBroker.subscribe called before start()")
         if group is not None:
             sub = self._core.fs_broker.subscriber(topic, group_id=group)
         else:
@@ -281,14 +321,14 @@ class FastStreamKafkaBroker(_FastStreamSchemeMixin):
 
     def _build_fs_broker(self) -> Any:
         _quiet_underlying_loggers()
-        from faststream.kafka import KafkaBroker
+        from faststream.kafka import KafkaBroker as _FSKafkaBroker
 
         # ``KafkaBroker`` wants raw bootstrap servers, not a URL.
         servers = self._core.url.removeprefix("kafka://") or "localhost:9092"
-        return KafkaBroker(servers, logger=None)
+        return _FSKafkaBroker(servers, logger=None)
 
 
-class FastStreamNatsBroker(_FastStreamSchemeMixin):
+class NatsBroker(_BrokerProps):
     """NATS broker — competing-consumer via queue groups.
 
     ``prefetch`` is forwarded to ``pending_msgs_limit`` — semantically
@@ -299,7 +339,7 @@ class FastStreamNatsBroker(_FastStreamSchemeMixin):
     """
 
     def __init__(self, *, url: str, _fs_broker: Any | None = None) -> None:
-        self._core = _FastStreamCore(
+        self._core = _BrokerCore(
             scheme="nats",
             url=url,
             fs_broker=_fs_broker,
@@ -314,7 +354,7 @@ class FastStreamNatsBroker(_FastStreamSchemeMixin):
 
     async def publish(self, topic: str, payload: bytes) -> None:
         if not self._core.started or self._core.fs_broker is None:
-            raise RuntimeError("FastStreamNatsBroker.publish called before start()")
+            raise RuntimeError("NatsBroker.publish called before start()")
         await self._core.fs_broker.publish(payload, topic)
 
     async def subscribe(
@@ -325,9 +365,10 @@ class FastStreamNatsBroker(_FastStreamSchemeMixin):
         group: str | None = None,
         prefetch: int | None = None,
         consumer_id: str | None = None,  # noqa: ARG002 — see class docstring
+        reclaim_min_idle_ms: int | None = None,  # noqa: ARG002 — Redis-only
     ) -> None:
         if not self._core.started or self._core.fs_broker is None:
-            raise RuntimeError("FastStreamNatsBroker.subscribe called before start()")
+            raise RuntimeError("NatsBroker.subscribe called before start()")
         kwargs: dict[str, Any] = {}
         if group is not None:
             kwargs["queue"] = group
@@ -340,12 +381,12 @@ class FastStreamNatsBroker(_FastStreamSchemeMixin):
 
     def _build_fs_broker(self) -> Any:
         _quiet_underlying_loggers()
-        from faststream.nats import NatsBroker
+        from faststream.nats import NatsBroker as _FSNatsBroker
 
-        return NatsBroker(self._core.url, logger=None)
+        return _FSNatsBroker(self._core.url, logger=None)
 
 
-class FastStreamRabbitBroker(_FastStreamSchemeMixin):
+class RabbitBroker(_BrokerProps):
     """RabbitMQ broker — competing-consumer is the natural default.
 
     ``broker.subscriber(topic)`` declares a queue named ``topic`` and
@@ -363,7 +404,7 @@ class FastStreamRabbitBroker(_FastStreamSchemeMixin):
     """
 
     def __init__(self, *, url: str, _fs_broker: Any | None = None) -> None:
-        self._core = _FastStreamCore(
+        self._core = _BrokerCore(
             scheme="amqp",
             url=url,
             fs_broker=_fs_broker,
@@ -378,7 +419,7 @@ class FastStreamRabbitBroker(_FastStreamSchemeMixin):
 
     async def publish(self, topic: str, payload: bytes) -> None:
         if not self._core.started or self._core.fs_broker is None:
-            raise RuntimeError("FastStreamRabbitBroker.publish called before start()")
+            raise RuntimeError("RabbitBroker.publish called before start()")
         await self._core.fs_broker.publish(payload, topic)
 
     async def subscribe(
@@ -389,9 +430,10 @@ class FastStreamRabbitBroker(_FastStreamSchemeMixin):
         group: str | None = None,  # noqa: ARG002 — see class docstring
         prefetch: int | None = None,  # noqa: ARG002 — see class docstring
         consumer_id: str | None = None,  # noqa: ARG002 — see class docstring
+        reclaim_min_idle_ms: int | None = None,  # noqa: ARG002 — Redis-only
     ) -> None:
         if not self._core.started or self._core.fs_broker is None:
-            raise RuntimeError("FastStreamRabbitBroker.subscribe called before start()")
+            raise RuntimeError("RabbitBroker.subscribe called before start()")
         sub = self._core.fs_broker.subscriber(topic)
         sub(_wrap_handler(handler))
         await sub.start()
@@ -399,9 +441,9 @@ class FastStreamRabbitBroker(_FastStreamSchemeMixin):
 
     def _build_fs_broker(self) -> Any:
         _quiet_underlying_loggers()
-        from faststream.rabbit import RabbitBroker
+        from faststream.rabbit import RabbitBroker as _FSRabbitBroker
 
-        return RabbitBroker(self._core.url, logger=None)
+        return _FSRabbitBroker(self._core.url, logger=None)
 
 
 # ---------------------------------------------------------------------------
@@ -411,31 +453,27 @@ class FastStreamRabbitBroker(_FastStreamSchemeMixin):
 
 _SCHEME_TO_CLASS: dict[
     str,
-    type[
-        FastStreamRedisBroker
-        | FastStreamKafkaBroker
-        | FastStreamNatsBroker
-        | FastStreamRabbitBroker
-    ],
+    type[RedisBroker | KafkaBroker | NatsBroker | RabbitBroker],
 ] = {
-    "redis": FastStreamRedisBroker,
-    "kafka": FastStreamKafkaBroker,
-    "nats": FastStreamNatsBroker,
-    "amqp": FastStreamRabbitBroker,
+    "redis": RedisBroker,
+    "kafka": KafkaBroker,
+    "nats": NatsBroker,
+    "amqp": RabbitBroker,
 }
 
 
-def FastStreamBroker(  # noqa: N802 — callable type-name for back-compat
+def make_broker(
     *,
     scheme: str,
     url: str,
     _fs_broker: Any | None = None,
-) -> FastStreamBrokerType:
-    """Construct the FastStream broker concrete for ``scheme``.
+) -> BackedBroker:
+    """Construct the broker concrete for ``scheme``.
 
     Dispatches on the URL scheme to one of the four scheme-specific
-    classes (``FastStreamRedisBroker`` etc.). Returned object satisfies
-    the :class:`Broker` Protocol.
+    classes (:class:`RedisBroker`, :class:`KafkaBroker`,
+    :class:`NatsBroker`, :class:`RabbitBroker`). Returned object
+    satisfies the :class:`Broker` Protocol.
 
     The four scheme classes are also importable directly when a caller
     wants the explicit type — most production code routes through the
@@ -451,25 +489,20 @@ def FastStreamBroker(  # noqa: N802 — callable type-name for back-compat
 
 
 # Tuple convenient for ``isinstance`` checks where a caller wants to
-# detect "is this any of our FastStream wrappers?" without listing
-# four names manually. Used by :mod:`murmur.server.router`.
-FastStreamBrokerTypes: tuple[type, ...] = (
-    FastStreamRedisBroker,
-    FastStreamKafkaBroker,
-    FastStreamNatsBroker,
-    FastStreamRabbitBroker,
+# detect "is this any of our broker wrappers?" without listing four
+# names manually. Used by :mod:`murmur.server.router`.
+BackedBrokers: tuple[type, ...] = (
+    RedisBroker,
+    KafkaBroker,
+    NatsBroker,
+    RabbitBroker,
 )
 
-# Union type alias for annotations that span every FastStream concrete.
-# ``FastStreamBroker`` itself is the construction *factory* (a function),
+# Union type alias for annotations that span every broker concrete.
+# :func:`make_broker` itself is the construction *factory* (a function),
 # not a type, so it can't be used as an annotation; use this alias when
 # a test or API wants "any of the four".
-FastStreamBrokerType: TypeAlias = (
-    FastStreamRedisBroker
-    | FastStreamKafkaBroker
-    | FastStreamNatsBroker
-    | FastStreamRabbitBroker
-)
+BackedBroker: TypeAlias = RedisBroker | KafkaBroker | NatsBroker | RabbitBroker
 
 
 # ---------------------------------------------------------------------------
@@ -519,11 +552,11 @@ def _wrap_handler(handler: MessageHandler) -> Any:
 
 
 __all__ = [
-    "FastStreamBroker",
-    "FastStreamBrokerType",
-    "FastStreamBrokerTypes",
-    "FastStreamKafkaBroker",
-    "FastStreamNatsBroker",
-    "FastStreamRabbitBroker",
-    "FastStreamRedisBroker",
+    "BackedBroker",
+    "BackedBrokers",
+    "KafkaBroker",
+    "NatsBroker",
+    "RabbitBroker",
+    "RedisBroker",
+    "make_broker",
 ]

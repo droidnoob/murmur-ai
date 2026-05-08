@@ -226,11 +226,11 @@ domain operations (route, resolve context, dispatch).
 
 The message-bus abstraction backing `JobBackend`. Concretes:
 
-- `FastStreamRedisBroker` — Redis Streams; first-class `consumer_id`,
+- `RedisBroker` — Redis Streams; first-class `consumer_id`,
   `prefetch`, and `group` support.
-- `FastStreamKafkaBroker` — Kafka with consumer `group_id`.
-- `FastStreamNatsBroker` — NATS queue groups.
-- `FastStreamRabbitBroker` — RabbitMQ named queues (competing-consumer
+- `KafkaBroker` — Kafka with consumer `group_id`.
+- `NatsBroker` — NATS queue groups.
+- `RabbitBroker` — RabbitMQ named queues (competing-consumer
   by default).
 - `InMemoryBroker` — in-process round-robin, `memory://` URLs, used in
   tests.

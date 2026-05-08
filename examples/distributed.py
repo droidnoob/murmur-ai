@@ -10,7 +10,7 @@ across a Kafka / NATS / RabbitMQ / Redis cluster — just without the network.
 The ``InMemoryBroker`` is what the user-facing ``broker="memory://"`` URL
 resolves to. We import it directly here because the runtime and worker need
 to share the *same* broker instance for the in-process round-trip to work.
-Swap the ``InMemoryBroker()`` line for a ``FastStreamBroker`` (or just pass
+Swap the ``InMemoryBroker()`` line for a the broker concretes (or just pass
 ``broker="kafka://localhost:9092"`` to the runtime + ``murmur worker start
 --broker kafka://localhost:9092 --agents geographer`` in another terminal)
 to see the distributed shape with no code change to the agent.

@@ -85,14 +85,19 @@ class InMemoryBroker:
         group: str | None = None,
         prefetch: int | None = None,
         consumer_id: str | None = None,
+        reclaim_min_idle_ms: int | None = None,
     ) -> None:
         # ``prefetch`` is a no-op here — InMemoryBroker dispatches one
         # message per ``publish`` call already, so per-poll batch size
         # has nothing to bound. ``consumer_id`` likewise has no role
-        # without a persistent stream / pending-entries list. Accept
-        # the kwargs to satisfy the Protocol so production code paths
-        # don't need a separate code branch when targeting in-memory.
-        del prefetch, consumer_id
+        # without a persistent stream / pending-entries list.
+        # ``reclaim_min_idle_ms`` is meaningless without a PEL — there's
+        # no acknowledged-vs-pending distinction in this broker; messages
+        # delivered are dropped from memory.
+        # Accept the kwargs to satisfy the Protocol so production code
+        # paths don't need a separate code branch when targeting
+        # in-memory.
+        del prefetch, consumer_id, reclaim_min_idle_ms
         if group is None:
             self._broadcast[topic].append(handler)
             return
