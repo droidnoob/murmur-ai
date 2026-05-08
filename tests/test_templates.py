@@ -80,6 +80,32 @@ def test_template_roundtrips_all_fields() -> None:
     assert isinstance(t.context_passer, FullContextPasser)
 
 
+def test_template_accepts_model_instance() -> None:
+    """Regression — ``AgentTemplate.model`` must accept a constructed
+    :class:`pydantic_ai.models.Model`, mirroring :attr:`Agent.model`. Without
+    this widening, any local-LLM / custom-base-url workflow (LM Studio,
+    Ollama, vLLM, …) can't use ``make_spawn_agents_tool``'s ``template=``
+    safety envelope.
+    """
+    from pydantic_ai.models.test import TestModel
+
+    m = TestModel()
+    t = AgentTemplate(model=m)
+    assert t.model is m
+    a = _agent(t)
+    assert a.model is m
+
+
+def test_template_agent_kwarg_accepts_model_instance() -> None:
+    """Per-call ``model=`` override on ``.agent()`` accepts an instance too."""
+    from pydantic_ai.models.test import TestModel
+
+    m = TestModel()
+    t = AgentTemplate()
+    a = _agent(t, model=m)
+    assert a.model is m
+
+
 def test_template_concurrency_mutual_exclusivity() -> None:
     pool = ConcurrencyLimiter(max_running=3)
     with pytest.raises(ValidationError, match="mutually exclusive"):

@@ -42,6 +42,7 @@ from typing import Any, Self
 from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.concurrency import AbstractConcurrencyLimiter
+from pydantic_ai.models import Model
 
 from murmur.agent import Agent, ProcessHook
 from murmur.core.protocols.context import ContextPasser
@@ -67,9 +68,13 @@ class AgentTemplate(BaseModel):
     swarm. Always return JSON. Never apologize."``
     """
 
-    model: str | None = None
-    """Default model string for materialised agents. ``None`` (default)
-    means the per-call kwarg must supply ``model=``."""
+    model: str | Model | None = None
+    """Default model for materialised agents — either a PydanticAI string
+    identifier (``"anthropic:claude-sonnet-4-6"``) or a constructed
+    :class:`pydantic_ai.models.Model` instance (for non-default Provider /
+    custom base URL — Azure, Bedrock, OpenRouter, LM Studio, Ollama, vLLM,
+    etc.). Mirrors :attr:`Agent.model`. ``None`` (default) means the
+    per-call kwarg must supply ``model=``."""
 
     fallback_models: tuple[str, ...] | None = None
     """Default fallback chain. See :attr:`Agent.fallback_models`."""
@@ -130,7 +135,7 @@ class AgentTemplate(BaseModel):
         name: str,
         instructions: str,
         output_type: type[BaseModel],
-        model: str | None = None,
+        model: str | Model | None = None,
         fallback_models: tuple[str, ...] | None = None,
         input_type: type[BaseModel] | None = None,
         tools: frozenset[str] | None = None,

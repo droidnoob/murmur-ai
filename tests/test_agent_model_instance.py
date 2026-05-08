@@ -97,6 +97,44 @@ def test_invalid_model_type_rejected() -> None:
         _make_agent(model=12345)
 
 
+def test_agent_hash_is_stable_with_model_instance() -> None:
+    """Regression — Pydantic's frozen-model default ``__hash__`` walks every
+    field, which fails when ``model`` is a ``Model`` instance (HTTP clients
+    and providers aren't hashable). ``Agent.__hash__`` must hash on ``name``
+    only so ``AgentGroup.topology={agent: Edge(...)}`` works against any
+    custom-base-url deployment (LM Studio, Ollama, vLLM, …).
+    """
+    a = _make_agent(name="a", model=TestModel())
+    b = _make_agent(name="b", model=TestModel())
+    a_again = _make_agent(name="a", model=TestModel())
+    # Hashable at all — was the failing case.
+    assert hash(a) == hash(a)
+    # Two agents with the same name share a hash regardless of other fields.
+    assert hash(a) == hash(a_again)
+    # Different names hash differently (modulo astronomically rare collisions).
+    assert hash(a) != hash(b)
+    # Usable as a dict key.
+    bucket = {a: 1, b: 2}
+    assert bucket[a] == 1 and bucket[b] == 2
+
+
+def test_agent_group_topology_accepts_model_instance() -> None:
+    """Regression — ``AgentGroup`` keys topology by ``Agent`` instance; that
+    has to work when ``model=`` is a constructed ``Model``.
+    """
+    from murmur.groups.edge import Edge
+    from murmur.groups.spec import AgentGroup
+
+    head = _make_agent(name="head", model=TestModel())
+    leaf = _make_agent(name="leaf", model=TestModel())
+    group = AgentGroup(
+        name="custom-base-url",
+        topology={head: Edge(to=(leaf,)), leaf: Edge.terminal()},
+    )
+    assert group.entry_nodes() == (head,)
+    assert group.terminal_nodes() == (leaf,)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch — Model instance flows through to pydantic_ai.Agent(model=...).
 # ---------------------------------------------------------------------------
