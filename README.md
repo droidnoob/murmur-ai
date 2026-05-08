@@ -13,7 +13,7 @@
 [![Status](https://img.shields.io/badge/status-pre--alpha-lightgrey)](#status)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A Python multi-agent orchestration runtime. Strictly typed, broker-agnostic, zero-config to start, distributed when you need it.
+A Python multi-agent orchestration runtime — *infrastructure* for spawning, distributing, and coordinating LLM-based agents reliably at scale. Strictly typed, broker-agnostic, zero-config to start, distributed when you need it.
 
 📖 **[Documentation →](https://murmur-ai.github.io/murmur/)** · 🧭 **[Concepts →](https://murmur-ai.github.io/murmur/concepts/architecture/)** · 📚 **[API reference →](https://murmur-ai.github.io/murmur/api/)** · 🛠️ **[Contributing →](CONTRIBUTING.md)** · 🔒 **[Security →](SECURITY.md)**
 
@@ -21,24 +21,45 @@ A Python multi-agent orchestration runtime. Strictly typed, broker-agnostic, zer
 
 ## What it is
 
-Murmur is **infrastructure**, not an agent framework. It does not define how an agent thinks — it defines how agents are spawned, distributed, and coordinated. The mental model is a **hypervisor** for LLM agents: spawn it, give it context, get a structured result back, kill it if needed.
+Murmur is **infrastructure**, not an agent framework. It does not define how an agent thinks — it defines how agents are spawned, distributed, and coordinated. The mental model is a **hypervisor for LLM agents**: spawn it, give it context, get a structured result back, kill it if needed.
 
 Internally, Murmur builds on [PydanticAI](https://ai.pydantic.dev/) for single-agent execution and [FastStream](https://faststream.airt.ai/) for broker-backed distribution — but those are **dependencies, not your imports**. Everything you write is `from murmur import ...`.
 
-## Why
+The same code runs locally on `asyncio` or distributed across a worker fleet on Kafka / NATS / RabbitMQ / Redis. The agent doesn't change. The workflow doesn't change. Only the runtime constructor changes.
 
-Most agent runtimes either lock you into one execution model (in-process only, or one specific broker) or let agents call tools directly with no policy layer. Murmur splits the concerns: PydanticAI owns single-agent execution, Murmur owns the orchestration — fan-out, routing, context passing, tool policy, trust levels, cost controls, observability — so the **same agent runs on a laptop or a Kafka cluster without changes.** You never construct a broker. You hand the runtime a URL.
+## Key features
 
-## Design principles
+- **One unified `Agent` class.** Single Pydantic-frozen spec combines LLM config (model, instructions, output schema, tools, builtin tools) with orchestration config (trust level, context passer, hooks). Wraps PydanticAI internally — users never `import pydantic_ai`. Bidirectional YAML ↔ Python representation.
 
-- **Pluggable everything, sensible defaults.** Override only what you care about.
-- **Strict I/O contracts.** Every input and output is a Pydantic schema. No free text between agents.
-- **Tools execute in the runtime, not the agent.** The agent requests a call; the runtime enforces policy, executes, logs, returns the result.
-- **User-controlled context passing.** The runtime never decides what the next agent sees — you do, via a policy.
-- **Single-agent and multi-agent share one interface.** A router decides which path runs.
-- **Backends are interchangeable.** Thread for dev, FastStream for prod, container for untrusted contexts (Phase 4).
-- **Observable by default.** Every spawn, tool call, completion flows through a typed `RuntimeEvent` to swappable emitters.
-- **One public API.** `from murmur import ...` — no PydanticAI or FastStream types leak outward.
+- **Strict typed I/O.** Every agent input and output is a Pydantic model. No free text crosses agent boundaries. Output validation retries on schema failures; results are typed all the way to your call site via `AgentResult[T]`.
+
+- **Same code, local or distributed.** `AgentRuntime()` runs on `asyncio` (the `AsyncBackend`); `AgentRuntime(broker="kafka://…")` publishes onto a broker for a worker fleet (the `JobBackend`). Both first-class from MVP, both pass the same Protocol contract suite.
+
+- **Distributed worker fleet.** Competing-consumer semantics across Kafka / NATS / RabbitMQ / Redis Streams. Stable consumer ids, `XAUTOCLAIM`-driven reclaim of abandoned pending entries, lifecycle hooks (`on_task_start` / `_complete` / `_error`), heartbeat events on a configurable timer, signed task envelopes for hostile-broker deployments.
+
+- **Multi-agent coordination.** Build typed `AgentGroup` DAGs with `Edge`s, run them with `runtime.run_group()`. Fan-out via `runtime.gather()` with bounded concurrency. LLM-driven dynamic fan-out via the built-in `spawn_agents` tool. Cascading-spawn detection, configurable depth + spawn cap.
+
+- **Tools execute in the runtime, not the agent.** Trust-level enforcement (`HIGH` / `MEDIUM` / `LOW` / `SANDBOX`), allow-list gating, and per-call lifecycle events are uniform regardless of provider. Native Python tools, MCP-discovered tools, and PydanticAI builtin tools (`WebSearchTool`, `CodeExecutionTool`, …) all flow through the same gate.
+
+- **MCP — both sides.** **Consume** any MCP server's tools through the same `tools=` knob (stdio / HTTP / SSE transports). **Expose** an `AgentServer` to MCP clients (Claude Desktop, Cursor, …) so your agents become callable tools. Opt-in per-agent — never auto-on.
+
+- **Observable by default.** Every spawn, completion, tool call, group start/end, worker lifecycle, and budget hit emits a typed `RuntimeEvent`. Composable emitters: `LogEventEmitter` (structlog), `SSEEventEmitter` (HTTP streaming), `MultiEventEmitter` (fan-out), `BrokerEventBridge` (worker → publisher relay). Every event carries `agent_name`, `task_id`, `trace_id`, `parent_trace_id`, `timestamp`.
+
+- **OpenTelemetry metrics export.** Drop-in `OTelMetricsEmitter` records `gen_ai.client.token.usage` and `gen_ai.client.operation.duration` histograms per the OTel GenAI semantic conventions, plus Murmur's own tool-call and rejection counters. Cardinality-safe attributes; your `MeterProvider` decides where the data lands (Datadog, Grafana, Logfire, Phoenix). Opt-in via `murmur-ai[otel]`.
+
+- **Cost-aware orchestration.** `TokenBudget` enforces per-task and per-runtime token ceilings with pre-check + post-charge semantics. Budgets propagate through cascading spawns; over-budget runs raise the typed `BudgetExceededError`. Best-effort USD costs computed from per-model rate cards.
+
+- **HTTP server with REST + SSE.** `murmur serve` exposes the runtime over HTTP: typed `/runs/{id}/result`, `/events/stream` (SSE for live events), composite `/runtime/stats`, plus rollups `/usage` (group by agent / trace / model / none) and `/tools` (per-tool latency percentiles). Mount as a FastAPI router or run standalone.
+
+- **Read-only dashboard.** A React dashboard ships pre-built; mount it at `/dashboard/` off the same server for fleet health, run history, cost-by-model bars, tool-latency tables, and the live event stream. Talks only to the documented HTTP API — no privileged access.
+
+- **Persistent run + event stores.** Optional `RunStore` / `EventStore` Protocols with in-memory, SQLite, RocksDB, and Redis concretes. Survives restarts; powers `/runs/{id}/tree` for the run inspector.
+
+- **Pluggable everywhere.** Backends, context passers, tool providers, routers, event emitters, registries — every pluggable is a `typing.Protocol` first, concrete second. Tests reuse one Protocol-keyed contract suite per Protocol. Bring your own concrete with structural typing; no inheritance required.
+
+- **Fully typed, no exceptions.** Every public function annotated. `ty` (Astral's Rust-based type checker) runs in CI. PEP 561 marker shipped.
+
+- **Migration paths.** Adopt Murmur incrementally — wrap an existing PydanticAI agent with `from_pydantic_ai()`, expose any Murmur agent as a FastStream subscriber via `as_faststream_handler()`. Migration guides for [PydanticAI](https://murmur-ai.github.io/murmur/guides/migration-pydantic-ai/), [FastStream](https://murmur-ai.github.io/murmur/guides/migration-faststream/), and [raw asyncio](https://murmur-ai.github.io/murmur/guides/migration-asyncio/).
 
 ## Architecture
 
@@ -53,7 +74,7 @@ Task → Router → Context → Tool resolve → Execute → Tool proxy → Vali
 Backends shipped:
 
 ```
-ThreadBackend     asyncio  · default · zero-config
+AsyncBackend      asyncio  · default · zero-config
 JobBackend        FastStream — Kafka / NATS / RabbitMQ / Redis Streams
 ContainerBackend  Docker — full isolation for untrusted context  (Phase 4)
 ```
@@ -66,75 +87,164 @@ Context passers form a cost/quality ladder:
 Null → Full → Summary → Selective   (Summary / Selective ship in Phase 3)
 ```
 
+## Requirements
+
+* Python **3.11** or higher.
+* No broker required for local mode (`AsyncBackend`).
+* For LLM calls: a provider API key (Anthropic / OpenAI / Gemini / Bedrock / Mistral / OpenRouter / your own OpenAI-compatible endpoint) — whatever PydanticAI supports.
+
 ## Install
 
 ```bash
-uv add murmur-ai                   # ThreadBackend, no broker — works immediately
-uv add 'murmur-ai[kafka]'          # add Kafka support
-uv add 'murmur-ai[server]'         # FastAPI HTTP server
-uv add 'murmur-ai[all]'            # all four brokers
+pip install murmur-ai            # AsyncBackend, no broker — works immediately
 ```
 
-> Murmur is built and managed with [`uv`](https://github.com/astral-sh/uv). Install with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
-
-Persistence extras (production deployments):
+Or with [`uv`](https://github.com/astral-sh/uv):
 
 ```bash
-uv add 'murmur-ai[sqlite]'         # single-host file-backed RunStore
-uv add 'murmur-ai[redis-runstore]' # cluster-wide RunStore
-uv add 'murmur-ai[rocksdb]'        # high-throughput single-host
+uv add murmur-ai
 ```
 
-## Quickstart
+Optional extras:
+
+| Extra | Pulls in | When |
+|---|---|---|
+| `murmur-ai[redis]` | `faststream[redis]` | Redis Streams broker |
+| `murmur-ai[kafka]` | `faststream[kafka]` | Kafka broker |
+| `murmur-ai[nats]` | `faststream[nats]` | NATS broker |
+| `murmur-ai[rabbitmq]` | `faststream[rabbit]` | RabbitMQ broker |
+| `murmur-ai[all]` | All four brokers | Multi-broker fleet |
+| `murmur-ai[server]` | `fastapi`, `uvicorn`, `sse-starlette` | `murmur serve` HTTP API |
+| `murmur-ai[otel]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel metrics export |
+| `murmur-ai[mcp-server]` | `mcp` | Expose as an MCP server |
+| `murmur-ai[sqlite]` | `aiosqlite` | Persistent `RunStore` / `EventStore` |
+| `murmur-ai[redis-runstore]` | `redis` | Cluster-wide `RunStore` |
+| `murmur-ai[rocksdb]` | `rocksdict` | High-throughput single-host store |
+| `murmur-ai[uvloop]` | `uvloop` | Faster async event loop (POSIX only) |
+| `murmur-ai[reload]` | `watchfiles` | `--reload` for serve / worker |
+
+## Example
+
+### Create it
 
 ```python
 import asyncio
-
 from pydantic import BaseModel
-
 from murmur import Agent, AgentRuntime, TaskSpec
 
 
-class ResearchOutput(BaseModel):
-    summary: str
-    sources: list[str]
+class ResearchFinding(BaseModel):
+    question: str
+    answer: str
     confidence: float
+    sources: list[str]
 
 
 researcher = Agent(
     name="researcher",
     model="anthropic:claude-sonnet-4-6",
-    instructions="Given a topic, return a structured summary with sources.",
-    output_type=ResearchOutput,
+    instructions="Research the question. Cite sources. Be honest about uncertainty.",
+    output_type=ResearchFinding,
 )
 
 
 async def main() -> None:
-    runtime = AgentRuntime()                                 # ThreadBackend, zero config
-    result = await runtime.run(researcher, TaskSpec(input="Mechanistic interpretability"))
+    runtime = AgentRuntime()
+    result = await runtime.run(researcher, TaskSpec(input="What is NATS JetStream?"))
     if result.is_ok():
-        print(result.output.summary)
+        finding: ResearchFinding = result.output  # typed
+        print(finding.answer, finding.sources)
     else:
-        print("error:", result.error)
+        print(result.error)
 
 
 asyncio.run(main())
 ```
 
-## Same agent, distributed
+`result` is `AgentResult[ResearchFinding]` — output is parsed, validated, and typed. Failures land as typed errors (`SpawnError`, `BudgetExceededError`, `ToolExecutionError`, …), never raw `Exception`.
+
+### Fan out
 
 ```python
-runtime = AgentRuntime(broker="kafka://localhost:9092")     # JobBackend via FastStream
-
-# fan-out
 results = await runtime.gather(
     researcher,
     tasks=[TaskSpec(input=q) for q in questions],
-    max_concurrency=100,
+    max_concurrency=20,
 )
 ```
 
-Same `Agent`. Different runtime constructor. The agent does not know it moved.
+### Coordinate
+
+```python
+from murmur import AgentGroup, Edge
+
+crew = AgentGroup(
+    name="research-crew",
+    agents={
+        "researcher": researcher,
+        "fact_checker": fact_checker,
+        "summariser": summariser,
+    },
+    edges=[
+        Edge("researcher", "fact_checker"),
+        Edge("fact_checker", "summariser"),
+    ],
+)
+group_result = await runtime.run_group(crew, TaskSpec(input="…"))
+```
+
+### Distribute
+
+Same agent. Same `gather()`. Different runtime constructor:
+
+```python
+runtime = AgentRuntime(broker="redis://localhost:6379")
+results = await runtime.gather(researcher, tasks, max_concurrency=100)
+```
+
+A separate `Worker` process consumes the broker:
+
+```bash
+murmur worker start --agents researcher --broker redis://localhost:6379 --concurrency 20
+```
+
+```python
+from murmur.worker import Worker
+
+worker = Worker(broker=broker, agents={"researcher": researcher}, concurrency=20)
+
+
+@worker.on_task_complete
+async def on_complete(task_id: str, agent_name: str, duration_ms: int) -> None:
+    print(f"[{task_id}] {agent_name} done in {duration_ms}ms")
+
+
+await worker.start()
+```
+
+The worker's lifecycle, heartbeat, and abandoned-pending-entry recovery are handled by Murmur. See [Distributed deployments](https://murmur-ai.github.io/murmur/guides/distributed/).
+
+### Observe
+
+```python
+from murmur.events import (
+    LogEventEmitter,
+    MultiEventEmitter,
+    OTelMetricsEmitter,
+    SSEEventEmitter,
+)
+
+sse = SSEEventEmitter()
+runtime = AgentRuntime(
+    event_emitter=MultiEventEmitter([
+        LogEventEmitter(),     # structlog INFO/ERROR
+        sse,                   # /events/stream HTTP feed
+        OTelMetricsEmitter(),  # gen_ai.* histograms to your OTel backend
+    ]),
+)
+```
+
+Run `murmur serve --port 8420` and the dashboard, the SSE stream, and the `/usage`, `/tools`, `/runtime/stats` endpoints all light up against the same event source.
 
 ## YAML specs
 
@@ -146,10 +256,9 @@ trust_level: medium
 context_passer: "null"
 
 instructions: |
-  You are a research agent. Given a topic, return a structured
-  summary with sources.
+  Research the question. Cite sources. Be honest about uncertainty.
 
-output_type: my_pkg.outputs.ResearchOutput   # importable class path
+output_type: my_pkg.outputs.ResearchFinding   # importable class path
 
 tools:
   - web_search
@@ -161,59 +270,15 @@ runtime.run("researcher", TaskSpec(input="..."))   # resolves from registry
 
 YAML and the SDK are bidirectional — every Python `Agent` round-trips through YAML and back.
 
-## Distributed workers
-
-```bash
-murmur worker start \
-    --agents researcher \
-    --broker kafka://localhost:9092 \
-    --concurrency 20
-```
-
-```python
-from murmur.worker import Worker
-
-worker = Worker(runtime=runtime, agents=["researcher"], concurrency=20)
-
-
-@worker.on_task_complete
-async def on_complete(task_id: str, agent_name: str, duration_ms: int) -> None:
-    print(f"[{task_id}] {agent_name} done in {duration_ms}ms")
-
-
-await worker.start()
-```
-
-## Observability — out of the box
-
-```python
-from murmur.events import LogEventEmitter, MultiEventEmitter, SSEEventEmitter
-
-sse = SSEEventEmitter(heartbeat_interval=15.0)
-runtime = AgentRuntime(
-    event_emitter=MultiEventEmitter([LogEventEmitter(), sse]),
-)
-
-# Hand sse.subscribe() to a FastAPI EventSourceResponse for a live dashboard.
-```
-
-`murmur serve` exposes the same SSE stream as a standalone HTTP server:
-
-```bash
-murmur serve --broker kafka://localhost:9092 --publish-events --port 8420
-# GET /events/stream — live RuntimeEvent frames for the entire worker fleet
-```
-
 ## CLI
 
 ```bash
 murmur run script.py                  # run a Python script
 murmur validate specs/                # validate YAML specs
 murmur worker start --agents X        # start a distributed worker
-murmur serve --port 8420              # standalone HTTP server + SSE stream
+murmur serve --port 8420              # standalone HTTP server + SSE stream + /dashboard/
+murmur status http://host:8420        # tail the live event stream in your terminal
 ```
-
-`murmur workflow run` and `murmur status` are later phases.
 
 ## Stack
 
@@ -223,6 +288,7 @@ murmur serve --port 8420              # standalone HTTP server + SSE stream
 | Validation   | Pydantic 2.13                         |
 | Agents       | PydanticAI 1.87  *(internal)*         |
 | Distribution | FastStream 0.6   *(internal)*         |
+| Metrics      | OpenTelemetry 1.39  *(opt-in extra)*  |
 | Logging      | structlog 25.5                        |
 | Packaging    | uv                                    |
 | Lint/Format  | ruff                                  |
@@ -236,7 +302,8 @@ Versions pinned exactly in `pyproject.toml`. See [`CLAUDE.md`](./CLAUDE.md) §9 
 
 ```
 src/murmur/
-    __init__.py        # public API: Agent, AgentRuntime, TaskSpec, TrustLevel, AgentResult, AgentGroup, Edge, FanOut, ...
+    __init__.py        # public API: Agent, AgentRuntime, TaskSpec, TrustLevel,
+                       #             AgentResult, AgentGroup, Edge, FanOut, ...
     agent.py           # Agent (wraps PydanticAI internally)
     runtime.py         # AgentRuntime + RuntimeOptions + broker-URL parsing
     types.py           # frozen value types
@@ -244,18 +311,19 @@ src/murmur/
     core/              # protocols, pipeline, errors  (zero sibling imports)
     context/           # context passers (full · null)
     tools/             # tool registry + executor + MCP factories + builtin re-exports
-    backends/          # thread · job (FastStream wrapper)
+    backends/          # async (asyncio) · job (broker-backed)
     groups/            # AgentGroup, Edge, runner
     middleware/        # retry · timeout · depth_limit · cost_tracking
     runs/              # RunStore + 4 concretes (in-memory · sqlite · rocksdb · redis)
-    events/            # RuntimeEvent + 4 emitter concretes
-    server/            # AgentServer + AgentRouter
+    events/            # RuntimeEvent + emitters (log · sse · multi · broker-bridge · otel)
+    server/            # AgentServer + AgentRouter + REST + SSE
     worker/            # distributed worker with lifecycle hooks
     registry/          # YAML + in-memory spec loaders
     interop/           # from_pydantic_ai · as_faststream_handler
-    cli/               # run · validate · worker · serve
+    cli/               # run · validate · worker · serve · status
 
-packages/murmur-client/        # separate wheel — HTTP + LocalClient
+packages/dashboard/             # React dashboard (separate package)
+packages/murmur-client/         # HTTP + LocalClient (separate wheel)
 
 docs/                  # mkdocs site (concepts, guides, API ref)
 tests/
@@ -267,7 +335,7 @@ The dependency arrow points inward to `core/` and `types.py`. Only `murmur.inter
 
 ## Status
 
-Pre-alpha. The runtime is feature-complete on its public surface — Phase 1 + 1.5 + 1.6 + 2 all shipped (events, cost tracking, distributed event bridge, MCP consume side, persistent run stores, standalone server, embedded mode). Phase 3 (smart context passers, group coordination tools, YAML workflow engine) and Phase 4 (Container isolation, full trust matrix, cascading-spawn controls) are scoped but not started.
+Pre-alpha. The runtime is feature-complete on its public surface — Phase 1, 1.5, 1.6, and most of Phase 2 (events, cost tracking, distributed event bridge, MCP both sides, persistent run/event stores, standalone server, embedded mode, OTel metrics, dashboard MVP, abandoned-PEL recovery) all shipped. Phase 3 (smart context passers, group coordination tools, YAML workflow engine) and Phase 4 (Container isolation, full trust matrix, cascading-spawn controls) are scoped but deferred.
 
 Public API is stable on the surface that's shipped. Additive changes only until v0.1.
 
@@ -281,7 +349,7 @@ uv run ruff check src tests
 uv run ruff format src tests
 uv run ty check
 uv run pytest                # all tests
-uv run pytest -m "not integration"   # unit only — 556 passing
+uv run pytest -m "not integration"   # unit only
 uv run pre-commit run --all-files
 
 uv run mkdocs serve          # local docs preview at :8000
@@ -291,12 +359,8 @@ CI fails on any of: ruff lint, ruff format drift, `ty` errors, failing tests, de
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup and quality gates,
-and read [`CLAUDE.md`](./CLAUDE.md) — the source of truth for project
-conventions, architecture, and "do not build" boundaries. Mirrored to
-[`AGENTS.md`](./AGENTS.md) for non-Claude tooling.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup and quality gates, and read [`CLAUDE.md`](./CLAUDE.md) — the source of truth for project conventions, architecture, and "do not build" boundaries. Mirrored to [`AGENTS.md`](./AGENTS.md) for non-Claude tooling.
 
 ## License
 
-[MIT](LICENSE). Compatible with our MIT (`pydantic-ai`, `pydantic`,
-`uvloop`) and Apache-2.0 (`faststream`, `mcp`, `httpx`) dependencies.
+[MIT](LICENSE). Compatible with our MIT (`pydantic-ai`, `pydantic`, `uvloop`) and Apache-2.0 (`faststream`, `mcp`, `httpx`, `opentelemetry-*`) dependencies.
