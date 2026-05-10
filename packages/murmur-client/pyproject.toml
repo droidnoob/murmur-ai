@@ -27,9 +27,17 @@ classifiers = [
 # the ``MurmurError`` hierarchy) are defined locally in ``_wire.py``;
 # round-trip identity comes from matching the JSON shape, not from
 # sharing the Python class.
+#
+# Pinning notes:
+#   The runtime exact-pins ``pydantic==X.Y.Z`` for reproducibility. If
+#   this client also exact-pinned, Dependabot would bump them on
+#   different days and the workspace would briefly fail to resolve.
+#   Use a compatible range here: the workspace solve still picks up
+#   the runtime's exact pin (so dev/CI use one version), and a
+#   standalone ``pip install murmur-client`` accepts any recent 2.x.
 dependencies = [
     "httpx>=0.27.0,<1.0",
-    "pydantic==2.13.3",
+    "pydantic>=2.10,<3.0",
 ]
 
 [project.urls]
