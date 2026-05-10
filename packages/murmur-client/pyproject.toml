@@ -29,7 +29,7 @@ classifiers = [
 # sharing the Python class.
 dependencies = [
     "httpx>=0.27.0,<1.0",
-    "pydantic==2.13.3",
+    "pydantic==2.13.4",
 ]
 
 [project.urls]
