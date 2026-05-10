@@ -1,0 +1,88 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly.
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Before you submit, please check the
+        existing issues to avoid duplicates.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: |
+        I called ``runtime.gather(agent, tasks=...)`` and got X, but I
+        expected Y because Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: |
+        The smallest piece of code that triggers the bug. The shorter
+        this is, the faster we can fix it. If reproduction needs a
+        broker, mention which one and how it's configured.
+      render: python
+      placeholder: |
+        from murmur import Agent, AgentRuntime, TaskSpec
+        # ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      placeholder: I expected the call to return ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Murmur version
+      description: Output of `python -c "import murmur; print(murmur.__version__)"`
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.13.1"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "macOS 15.2 / Ubuntu 24.04 / Windows 11"
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Traceback / logs
+      description: Full traceback or relevant log output. Code-fence with ```.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have searched existing issues and this bug has not been reported.
+          required: true
+        - label: I am running a supported Python version (>=3.11).
+          required: true

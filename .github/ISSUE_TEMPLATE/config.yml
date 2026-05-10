@@ -1,0 +1,13 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/droidnoob/murmur-ai/security/advisories/new
+    about: |
+      Don't open a public issue for a security vulnerability. Use
+      GitHub's private vulnerability reporting instead — see SECURITY.md.
+
+  - name: Question / discussion
+    url: https://github.com/droidnoob/murmur-ai/discussions
+    about: |
+      For general "how do I do X" or design questions, prefer
+      Discussions over Issues.

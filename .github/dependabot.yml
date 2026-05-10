@@ -1,0 +1,73 @@
+version: 2
+
+updates:
+  # Python deps in the root project (PydanticAI, FastStream, structlog,
+  # broker drivers, dev tooling). Weekly so the volume stays manageable;
+  # ``versioning-strategy: increase-if-necessary`` prefers the smallest
+  # bump that satisfies the existing constraint range.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+      include: scope
+    versioning-strategy: increase-if-necessary
+    labels:
+      - dependencies
+      - python
+
+  # Python deps inside the lean HTTP client.
+  - package-ecosystem: pip
+    directory: "/packages/murmur-client"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(murmur-client)"
+      include: scope
+    versioning-strategy: increase-if-necessary
+    labels:
+      - dependencies
+      - python
+
+  # JS deps for the TypeScript client. Mostly devDependencies (tsc,
+  # vitest, @types/*) so most updates are low-blast-radius patches.
+  - package-ecosystem: npm
+    directory: "/packages/js-client"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(js-client)"
+      include: scope
+    labels:
+      - dependencies
+      - javascript
+
+  # GitHub Actions versions. Keeps action pins ahead of the Node-20 →
+  # Node-24 deprecation curve and any security advisories.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: scope
+    labels:
+      - dependencies
+      - github-actions

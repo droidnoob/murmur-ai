@@ -1,0 +1,70 @@
+name: Feature request
+description: Suggest an addition or improvement.
+title: "[feature] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Two things help most: a concrete
+        problem you're hitting today, and a sketch of the API you'd
+        want. Pure abstract requests ("add support for X") are harder
+        to evaluate.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that's currently awkward or impossible?
+      placeholder: |
+        I'm running Murmur with a custom event store and want to ...
+        but the current API only supports ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API / behaviour
+      description: |
+        What would the ideal call site look like? Pseudocode is fine.
+        If this is a new Protocol or concrete, include a sketch of the
+        shape.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        What else did you try? Is there a workaround today (even an
+        ugly one)? What's missing about it?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Where does this fit?
+      options:
+        - Public API (``from murmur import ...``)
+        - Internal package (``murmur.runtime``, ``murmur.backends``, etc.)
+        - HTTP server / dashboard
+        - Distributed mode (broker, worker)
+        - Examples / docs
+        - Tooling / CI
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have searched existing issues and this hasn't been requested.
+          required: true
+        - label: I'm willing to discuss alternatives — the proposal is a starting point, not a demand.
+          required: true
