@@ -393,10 +393,14 @@ async def test_tampered_parent_spawn_rejected(
     await broker.publish(
         task_topic(echo_agent.name), tampered.model_dump_json().encode()
     )
-    # Drain the in-memory broker's handler tasks so the rejection
-    # ResultMessage has been published before assertions run.
-    for _ in range(10):
-        await asyncio.sleep(0)
+    # Wait for the rejection ResultMessage to land. Pure ``sleep(0)``
+    # cycles the loop without giving the broker handler real time, which
+    # races on newer schedulers (py3.12 and py3.13). Wait up to 1s in
+    # 50ms increments.
+    for _ in range(20):
+        if received:
+            break
+        await asyncio.sleep(0.05)
     try:
         # The worker should have published one rejection ResultMessage.
         assert len(received) == 1
