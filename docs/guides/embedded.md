@@ -9,7 +9,7 @@ application's middleware stack and lifecycle.
 ```bash
 uv init my-fastapi-app
 cd my-fastapi-app
-uv add 'murmur-ai[server]' fastapi httpx uvicorn
+uv add 'murmur-runtime[server]' fastapi httpx uvicorn
 export ANTHROPIC_API_KEY=...
 ```
 

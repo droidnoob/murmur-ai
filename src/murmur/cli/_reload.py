@@ -63,7 +63,7 @@ def reload_wrap(
     except ImportError:
         print(
             "[error] --reload requires the 'watchfiles' package. "
-            "Install with: uv add 'murmur-ai[reload]'",
+            "Install with: uv add 'murmur-runtime[reload]'",
             file=sys.stderr,
         )
         return 2

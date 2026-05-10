@@ -12,7 +12,7 @@ ASGI app wants to expose a Murmur event feed alongside its own routes.
 See also: ``docs/concepts/events.md``, ``docs/api/events.md``.
 
 Prereqs:
-    pip install murmur-ai[server]
+    pip install murmur-runtime[server]
     export ANTHROPIC_API_KEY=...
 
 Run:

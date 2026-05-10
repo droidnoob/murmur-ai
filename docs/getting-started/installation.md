@@ -5,7 +5,7 @@ Murmur supports Python 3.11, 3.12, and 3.13.
 ## Core install
 
 ```bash
-pip install murmur-ai
+pip install murmur-runtime
 ```
 
 This pulls in `pydantic`, `pydantic-ai`, `faststream`, `structlog`, and
@@ -19,31 +19,31 @@ When you're ready to distribute work across machines, add the matching extra:
 === "Kafka"
 
     ```bash
-    pip install "murmur-ai[kafka]"
+    pip install "murmur-runtime[kafka]"
     ```
 
 === "NATS"
 
     ```bash
-    pip install "murmur-ai[nats]"
+    pip install "murmur-runtime[nats]"
     ```
 
 === "RabbitMQ"
 
     ```bash
-    pip install "murmur-ai[rabbitmq]"
+    pip install "murmur-runtime[rabbitmq]"
     ```
 
 === "Redis"
 
     ```bash
-    pip install "murmur-ai[redis]"
+    pip install "murmur-runtime[redis]"
     ```
 
 === "All four"
 
     ```bash
-    pip install "murmur-ai[all-brokers]"
+    pip install "murmur-runtime[all-brokers]"
     ```
 
 The extra installs the matching `faststream` integration. Murmur's
@@ -57,7 +57,7 @@ The HTTP server (`murmur.server.AgentServer` and the `murmur serve` CLI)
 bring `fastapi`, `uvicorn`, and `sse-starlette`:
 
 ```bash
-pip install "murmur-ai[server]"
+pip install "murmur-runtime[server]"
 ```
 
 ## Persistent run-store extras
@@ -66,9 +66,9 @@ The default `InMemoryRunStore` loses in-flight runs on restart. For
 production, pick one:
 
 ```bash
-pip install "murmur-ai[sqlite]"          # single-host, file-backed
-pip install "murmur-ai[redis-runstore]"  # cluster-wide
-pip install "murmur-ai[rocksdb]"         # high-throughput single-host
+pip install "murmur-runtime[sqlite]"          # single-host, file-backed
+pip install "murmur-runtime[redis-runstore]"  # cluster-wide
+pip install "murmur-runtime[rocksdb]"         # high-throughput single-host
 ```
 
 All three implement the same `RunStore` Protocol and pass the same
@@ -77,7 +77,7 @@ All three implement the same `RunStore` Protocol and pass the same
 ## Development install
 
 ```bash
-git clone https://github.com/droidnoob/murmur-ai && cd murmur-ai
+git clone https://github.com/droidnoob/murmur-ai && cd murmur-runtime
 uv sync --group dev
 uv run pytest -m "not integration" -q     # 556 tests, all green
 ```

@@ -28,7 +28,7 @@ See also: ``docs/concepts/coordination.md`` ("Cross-run memory" pattern),
 ``docs/concepts/tools.md``, ``CLAUDE.md §22`` (what NOT to build).
 
 Prereqs:
-    pip install murmur-ai
+    pip install murmur-runtime
     export ANTHROPIC_API_KEY=...
 
 Run:

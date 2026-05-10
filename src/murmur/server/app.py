@@ -234,7 +234,7 @@ class AgentServer:
         ASGI shutdown for HTTP). Constructs a fresh :class:`FastMCP`
         per call so multiple invocations on the same server work
         cleanly. Raises :class:`ImportError` with a setup hint if the
-        ``murmur-ai[mcp-server]`` extra isn't installed.
+        ``murmur-runtime[mcp-server]`` extra isn't installed.
 
         Only agents added via :meth:`register_mcp` appear as tools. If
         no agents are enrolled, raises :class:`RegistryError` rather

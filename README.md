@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/downloads/)
 [![pydantic-ai](https://img.shields.io/badge/pydantic--ai-1.87-purple)](https://ai.pydantic.dev/)
 [![FastStream](https://img.shields.io/badge/faststream-0.6-orange)](https://faststream.ag2.ai/latest/)
-[![PyPI](https://img.shields.io/badge/pypi-murmur--ai-blueviolet)](https://pypi.org/project/murmur-ai/)
+[![PyPI](https://img.shields.io/badge/pypi-murmur--ai-blueviolet)](https://pypi.org/project/murmur-runtime/)
 [![Docs](https://img.shields.io/badge/docs-droidnoob.github.io-blue)](https://droidnoob.github.io/murmur-ai/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -45,7 +45,7 @@ The same code runs locally on `asyncio` or distributed across a worker fleet on 
 
 - **Observable by default.** Every spawn, completion, tool call, group start/end, worker lifecycle, and budget hit emits a typed `RuntimeEvent`. Composable emitters: `LogEventEmitter` (structlog), `SSEEventEmitter` (HTTP streaming), `MultiEventEmitter` (fan-out), `BrokerEventBridge` (worker → publisher relay). Every event carries `agent_name`, `task_id`, `trace_id`, `parent_trace_id`, `timestamp`.
 
-- **OpenTelemetry metrics export.** Drop-in `OTelMetricsEmitter` records `gen_ai.client.token.usage` and `gen_ai.client.operation.duration` histograms per the OTel GenAI semantic conventions, plus Murmur's own tool-call and rejection counters. Cardinality-safe attributes; your `MeterProvider` decides where the data lands (Datadog, Grafana, Logfire, Phoenix). Opt-in via `murmur-ai[otel]`.
+- **OpenTelemetry metrics export.** Drop-in `OTelMetricsEmitter` records `gen_ai.client.token.usage` and `gen_ai.client.operation.duration` histograms per the OTel GenAI semantic conventions, plus Murmur's own tool-call and rejection counters. Cardinality-safe attributes; your `MeterProvider` decides where the data lands (Datadog, Grafana, Logfire, Phoenix). Opt-in via `murmur-runtime[otel]`.
 
 - **Cost-aware orchestration.** `TokenBudget` enforces per-task and per-runtime token ceilings with pre-check + post-charge semantics. Budgets propagate through cascading spawns; over-budget runs raise the typed `BudgetExceededError`. Best-effort USD costs computed from per-model rate cards.
 
@@ -95,33 +95,33 @@ Null → Full → Summary → Selective   (Summary / Selective planned)
 ## Install
 
 ```bash
-pip install murmur-ai            # AsyncBackend, no broker — works immediately
+pip install murmur-runtime            # AsyncBackend, no broker — works immediately
 ```
 
 Or with [`uv`](https://github.com/astral-sh/uv):
 
 ```bash
-uv add murmur-ai
+uv add murmur-runtime
 ```
 
 Optional extras:
 
 | Extra | Pulls in | When |
 |---|---|---|
-| `murmur-ai[redis]` | `faststream[redis]` | Redis Streams broker |
-| `murmur-ai[kafka]` | `faststream[kafka]` | Kafka broker |
-| `murmur-ai[nats]` | `faststream[nats]` | NATS broker |
-| `murmur-ai[rabbitmq]` | `faststream[rabbit]` | RabbitMQ broker |
-| `murmur-ai[all-brokers]` | All four brokers | Multi-broker fleet |
-| `murmur-ai[server]` | `fastapi`, `uvicorn`, `sse-starlette` | `murmur serve` HTTP API |
-| `murmur-ai[otel]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel metrics export |
-| `murmur-ai[mcp-server]` | `mcp` | Expose as an MCP server |
-| `murmur-ai[sqlite]` | `aiosqlite` | Persistent `RunStore` / `EventStore` |
-| `murmur-ai[redis-runstore]` | `redis` | Cluster-wide `RunStore` |
-| `murmur-ai[rocksdb]` | `rocksdict` | High-throughput single-host store |
-| `murmur-ai[uvloop]` | `uvloop` | Faster async event loop (POSIX only) |
-| `murmur-ai[reload]` | `watchfiles` | `--reload` for serve / worker |
-| `murmur-ai[all]` | Every optional extra | Kitchen-sink install |
+| `murmur-runtime[redis]` | `faststream[redis]` | Redis Streams broker |
+| `murmur-runtime[kafka]` | `faststream[kafka]` | Kafka broker |
+| `murmur-runtime[nats]` | `faststream[nats]` | NATS broker |
+| `murmur-runtime[rabbitmq]` | `faststream[rabbit]` | RabbitMQ broker |
+| `murmur-runtime[all-brokers]` | All four brokers | Multi-broker fleet |
+| `murmur-runtime[server]` | `fastapi`, `uvicorn`, `sse-starlette` | `murmur serve` HTTP API |
+| `murmur-runtime[otel]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel metrics export |
+| `murmur-runtime[mcp-server]` | `mcp` | Expose as an MCP server |
+| `murmur-runtime[sqlite]` | `aiosqlite` | Persistent `RunStore` / `EventStore` |
+| `murmur-runtime[redis-runstore]` | `redis` | Cluster-wide `RunStore` |
+| `murmur-runtime[rocksdb]` | `rocksdict` | High-throughput single-host store |
+| `murmur-runtime[uvloop]` | `uvloop` | Faster async event loop (POSIX only) |
+| `murmur-runtime[reload]` | `watchfiles` | `--reload` for serve / worker |
+| `murmur-runtime[all]` | Every optional extra | Kitchen-sink install |
 
 ## Example
 
@@ -329,7 +329,7 @@ docs/                  # mkdocs site (concepts, guides, API ref)
 tests/
 ```
 
-PyPI distribution: `murmur-ai`. Import: `murmur` (`pip install murmur-ai` → `import murmur`).
+PyPI distribution: `murmur-runtime`. Import: `murmur` (`pip install murmur-runtime` → `import murmur`).
 
 The dependency arrow points inward to `core/` and `types.py`. Only `murmur.interop` may import `pydantic_ai` or `faststream`.
 

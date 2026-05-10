@@ -5,7 +5,7 @@ has its own concrete class implementing the :class:`Broker` Protocol
 with honest, scheme-specific behaviour: :class:`RedisBroker`,
 :class:`KafkaBroker`, :class:`NatsBroker`, :class:`RabbitBroker`. Lazy
 imports keep the dependency fan-out clean — a user only needs the
-relevant ``murmur-ai[<scheme>]`` extra installed to construct that
+relevant ``murmur-runtime[<scheme>]`` extra installed to construct that
 scheme's class.
 
 The implementation library (FastStream) is deliberately absent from any

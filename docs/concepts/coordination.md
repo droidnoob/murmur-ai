@@ -410,7 +410,7 @@ await runtime.run(librarian, TaskSpec(input="Remember teal."))
 await runtime.run(librarian, TaskSpec(input="What's my colour?"))
 ```
 
-See [`examples/memory_via_tool.py`](https://github.com/anthropics/murmur-ai/blob/main/examples/memory_via_tool.py)
+See [`examples/memory_via_tool.py`](https://github.com/anthropics/murmur-runtime/blob/main/examples/memory_via_tool.py)
 for a complete runnable example with a stub store you swap for Chroma,
 sqlite-vec, pgvector, or Redis at the closure boundary. The runtime sees
 two independent dispatches; the persistence is yours.

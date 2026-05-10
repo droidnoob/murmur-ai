@@ -25,7 +25,7 @@ See also: ``docs/guides/embedded.md``, ``docs/api/server.md``,
 ``docs/api/client.md``.
 
 Prereqs:
-    pip install murmur-ai[server]
+    pip install murmur-runtime[server]
     export ANTHROPIC_API_KEY=...
 
 Run:

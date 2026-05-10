@@ -4,8 +4,8 @@ requires-python = ">=3.11"
 
 [manifest]
 members = [
-    "murmur-ai",
     "murmur-client",
+    "murmur-runtime",
 ]
 
 [[package]]
@@ -2252,7 +2252,22 @@ wheels = [
 ]
 
 [[package]]
-name = "murmur-ai"
+name = "murmur-client"
+version = "0.1.0"
+source = { editable = "packages/murmur-client" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27.0,<1.0" },
+    { name = "pydantic", specifier = "==2.13.3" },
+]
+
+[[package]]
+name = "murmur-runtime"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -2434,21 +2449,6 @@ docs = [
     { name = "mkdocs-material", specifier = ">=9.6,<10" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.27,<1" },
     { name = "pymdown-extensions", specifier = ">=10.11,<11" },
-]
-
-[[package]]
-name = "murmur-client"
-version = "0.1.0"
-source = { editable = "packages/murmur-client" }
-dependencies = [
-    { name = "httpx" },
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.27.0,<1.0" },
-    { name = "pydantic", specifier = "==2.13.3" },
 ]
 
 [[package]]

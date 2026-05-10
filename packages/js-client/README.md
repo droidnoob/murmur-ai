@@ -1,4 +1,4 @@
-# @murmur-ai/client
+# @murmur/client
 
 TypeScript client for [Murmur](../../README.md) agent servers. Browser + Node compatible (fetch + ReadableStream — no `EventSource`, so custom `Authorization` headers work).
 
@@ -7,15 +7,15 @@ Mirrors the Python client at [`packages/murmur-client`](../murmur-client) — sa
 ## Install
 
 ```bash
-npm install @murmur-ai/client
+npm install @murmur/client
 # or
-pnpm add @murmur-ai/client
+pnpm add @murmur/client
 ```
 
 ## Quickstart
 
 ```ts
-import { MurmurClient } from "@murmur-ai/client";
+import { MurmurClient } from "@murmur/client";
 
 const client = new MurmurClient("http://localhost:8421", {
   authToken: process.env.MURMUR_TOKEN, // omit if the server has no auth_token set

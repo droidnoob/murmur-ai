@@ -24,7 +24,7 @@ exactly one Worker (no broadcast).
 Pairs with: ``docs/concepts/backends.md``, ``docs/guides/distributed.md``.
 
 Prereqs:
-    pip install murmur-ai
+    pip install murmur-runtime
     export ANTHROPIC_API_KEY=...
 
 Run:

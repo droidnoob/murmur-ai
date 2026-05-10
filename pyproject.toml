@@ -1,5 +1,5 @@
 [project]
-name = "murmur-ai"
+name = "murmur-runtime"
 version = "0.1.0"
 description = "A Python multi-agent orchestration runtime. Agents that move as one."
 readme = "README.md"
@@ -93,7 +93,7 @@ otel = [
 # warning rather than failing on Windows.
 uvloop = ["uvloop>=0.21,<1.0"]
 
-# Kitchen sink. ``pip install 'murmur-ai[all]'`` pulls every optional
+# Kitchen sink. ``pip install 'murmur-runtime[all]'`` pulls every optional
 # extra so a single command sets up a fully-featured environment — all
 # brokers, server + dashboard, every RunStore concrete, MCP-expose, OTel,
 # reload, container backend, uvloop. Use ``[all-brokers]`` instead when
@@ -176,7 +176,7 @@ dev = [
     "opentelemetry-api>=1.39,<1.40",
     "opentelemetry-sdk>=1.39,<1.40",
     # uvloop is an optional extra at runtime (POSIX-only, pulled in via
-    # ``murmur-ai[uvloop]``), but ty's static import resolution fails
+    # ``murmur-runtime[uvloop]``), but ty's static import resolution fails
     # without it installed because ``cli/_uvloop.py`` does ``import uvloop``
     # inside a try/except. Pulling it into dev keeps type-checking + the
     # ``[uvloop]``-extra tests green on every dev machine and in CI.
@@ -202,7 +202,7 @@ module-name = "murmur"
 module-root = "src"
 
 # ---------------------------------------------------------------------------
-# uv workspace — `murmur-ai` (this) + `murmur-client` (packages/murmur-client)
+# uv workspace — `murmur-runtime` (this) + `murmur-client` (packages/murmur-client)
 # both build as separate wheels but share one ``uv.lock``. The dev sync
 # installs both in editable mode so tests against ``murmur_client`` work
 # across the whole monorepo without per-package installs.

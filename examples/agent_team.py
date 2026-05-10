@@ -14,7 +14,7 @@ the coordinator's tool calls within one ``run_group()`` invocation
 Pairs with: ``docs/concepts/coordination.md`` (`AgentTeam` section).
 
 Prereqs:
-    pip install murmur-ai
+    pip install murmur-runtime
     export ANTHROPIC_API_KEY=...
 
 Run:

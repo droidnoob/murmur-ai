@@ -7,7 +7,7 @@ structurally. :class:`RuntimeEvent` is the typed envelope every event
 flows through.
 
 :class:`OTelMetricsEmitter` is the OTel GenAI metrics adapter. Lazy-
-imported because it depends on the optional ``murmur-ai[otel]`` extra;
+imported because it depends on the optional ``murmur-runtime[otel]`` extra;
 ``from murmur.events import OTelMetricsEmitter`` raises a clear
 :class:`ImportError` when the extra isn't installed.
 """

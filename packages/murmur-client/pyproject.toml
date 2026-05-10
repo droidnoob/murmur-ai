@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 # Lean by design. ``murmur-client`` deliberately does not depend on
-# ``murmur-ai`` — the server-side install pulls PydanticAI + FastStream +
+# ``murmur-runtime`` — the server-side install pulls PydanticAI + FastStream +
 # structlog and a stack of broker drivers, none of which a thin HTTP
 # caller needs. Wire types (``TaskSpec``, ``AgentResult``, ``RunStatus``,
 # the ``MurmurError`` hierarchy) are defined locally in ``_wire.py``;
@@ -44,8 +44,8 @@ build-backend = "uv_build"
 module-name = "murmur_client"
 module-root = "src"
 
-# ``murmur-ai`` lives in the same workspace — resolve it from there during
+# ``murmur-runtime`` lives in the same workspace — resolve it from there during
 # ``uv sync``, not from PyPI. Mirrors the workspace declaration in the root
 # ``pyproject.toml``.
 [tool.uv.sources]
-murmur-ai = { workspace = true }
+murmur-runtime = { workspace = true }

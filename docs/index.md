@@ -10,8 +10,8 @@ hide:
 <p align="center"><em>Production runtime for multi-agent LLM systems.</em></p>
 
 <p align="center">
-<a href="https://pypi.org/project/murmur-ai/"><img src="https://img.shields.io/pypi/v/murmur-ai.svg" alt="PyPI"></a>
-<a href="https://pypi.org/project/murmur-ai/"><img src="https://img.shields.io/pypi/pyversions/murmur-ai.svg" alt="Python versions"></a>
+<a href="https://pypi.org/project/murmur-runtime/"><img src="https://img.shields.io/pypi/v/murmur-runtime.svg" alt="PyPI"></a>
+<a href="https://pypi.org/project/murmur-runtime/"><img src="https://img.shields.io/pypi/pyversions/murmur-runtime.svg" alt="Python versions"></a>
 <a href="https://github.com/droidnoob/murmur-ai/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
 </p>
 
@@ -96,7 +96,7 @@ workflow doesn't change. Only the runtime constructor changes.
   semantic conventions, plus Murmur's own tool-call and rejection
   counters. Cardinality-safe attributes. Murmur stays out of exporter
   config — your `MeterProvider` decides where the data lands (Datadog,
-  Grafana, Logfire, Phoenix, …). Opt-in via `murmur-ai[otel]`.
+  Grafana, Logfire, Phoenix, …). Opt-in via `murmur-runtime[otel]`.
   [Learn more →](concepts/events.md#otelmetricsemitter)
 
 - **Cost-aware orchestration.** `TokenBudget` enforces per-task and
@@ -155,7 +155,7 @@ workflow doesn't change. Only the runtime constructor changes.
 <!-- termynal -->
 
 ```bash
-pip install murmur-ai
+pip install murmur-runtime
 ```
 
 The base install ships `AsyncBackend` (asyncio), the typed runtime, the
@@ -164,18 +164,18 @@ Add extras as you grow:
 
 | Extra | Pulls in | When |
 |---|---|---|
-| `murmur-ai[redis]` | `faststream[redis]` | Redis Streams broker |
-| `murmur-ai[kafka]` | `faststream[kafka]` | Kafka broker |
-| `murmur-ai[nats]` | `faststream[nats]` | NATS broker |
-| `murmur-ai[rabbitmq]` | `faststream[rabbit]` | RabbitMQ broker |
-| `murmur-ai[all-brokers]` | All four brokers | Multi-broker fleet |
-| `murmur-ai[server]` | `fastapi`, `uvicorn`, `sse-starlette` | `murmur serve` HTTP API |
-| `murmur-ai[otel]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel metrics export |
-| `murmur-ai[mcp-server]` | `mcp` | Expose as an MCP server |
-| `murmur-ai[sqlite]` | `aiosqlite` | Persistent `RunStore` / `EventStore` |
-| `murmur-ai[uvloop]` | `uvloop` | Faster async event loop (POSIX only) |
-| `murmur-ai[reload]` | `watchfiles` | `--reload` for serve / worker |
-| `murmur-ai[all]` | Every optional extra | Kitchen-sink install |
+| `murmur-runtime[redis]` | `faststream[redis]` | Redis Streams broker |
+| `murmur-runtime[kafka]` | `faststream[kafka]` | Kafka broker |
+| `murmur-runtime[nats]` | `faststream[nats]` | NATS broker |
+| `murmur-runtime[rabbitmq]` | `faststream[rabbit]` | RabbitMQ broker |
+| `murmur-runtime[all-brokers]` | All four brokers | Multi-broker fleet |
+| `murmur-runtime[server]` | `fastapi`, `uvicorn`, `sse-starlette` | `murmur serve` HTTP API |
+| `murmur-runtime[otel]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel metrics export |
+| `murmur-runtime[mcp-server]` | `mcp` | Expose as an MCP server |
+| `murmur-runtime[sqlite]` | `aiosqlite` | Persistent `RunStore` / `EventStore` |
+| `murmur-runtime[uvloop]` | `uvloop` | Faster async event loop (POSIX only) |
+| `murmur-runtime[reload]` | `watchfiles` | `--reload` for serve / worker |
+| `murmur-runtime[all]` | Every optional extra | Kitchen-sink install |
 
 See [Installation](getting-started/installation.md) for the full table.
 

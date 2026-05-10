@@ -147,10 +147,10 @@ OpenTelemetry GenAI metrics adapter. Drops in alongside `LogEventEmitter`
 inside a `MultiEventEmitter`; every `RuntimeEvent` that carries
 quantitative information is recorded as an OTel histogram or counter.
 
-Behind the optional `murmur-ai[otel]` extra:
+Behind the optional `murmur-runtime[otel]` extra:
 
 ```bash
-pip install "murmur-ai[otel]"
+pip install "murmur-runtime[otel]"
 ```
 
 Importing the emitter without the extra raises a clear `ImportError`
@@ -245,7 +245,7 @@ read-only rollups computed on demand from the store:
 
 For local development, add `--reload` to auto-restart on file changes
 (uses `watchfiles`, same library as FastStream + uvicorn — install via
-`uv add 'murmur-ai[reload]'`):
+`uv add 'murmur-runtime[reload]'`):
 
 ```bash
 murmur serve --port 8420 --reload --reload-dir ./specs --reload-dir ./src

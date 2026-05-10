@@ -6,7 +6,7 @@ The canonical contributor guide lives at the project root —
 ## TL;DR
 
 ```bash
-git clone https://github.com/droidnoob/murmur-ai && cd murmur-ai
+git clone https://github.com/droidnoob/murmur-ai && cd murmur-runtime
 uv sync --group dev
 uv run pre-commit install
 uv run pytest -m "not integration" -q     # 556 unit tests

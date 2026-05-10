@@ -108,7 +108,7 @@ shipped yet (`0.0.0` placeholder). Highlights since project inception:
 
 ### Added — packaging
 
-- Workspace layout: `murmur-ai` (this) + `murmur-client` (separate wheel).
+- Workspace layout: `murmur-runtime` (this) + `murmur-client` (separate wheel).
 - Optional extras: `[kafka]`, `[nats]`, `[rabbitmq]`, `[redis]`, `[all]`,
   `[server]`, `[sqlite]`, `[rocksdb]`, `[redis-runstore]`, `[container]`,
   `[docs]`.
@@ -121,4 +121,4 @@ shipped yet (`0.0.0` placeholder). Highlights since project inception:
 - GitHub Pages workflow at `.github/workflows/docs.yml` using
   `actions/upload-pages-artifact@v3` + `actions/deploy-pages@v4`.
 
-[Unreleased]: https://github.com/murmur-ai/murmur/commits/main
+[Unreleased]: https://github.com/murmur-runtime/murmur/commits/main

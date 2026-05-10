@@ -10,7 +10,7 @@ runtime constructor does.
 ```bash
 uv init my-murmur-app
 cd my-murmur-app
-uv add 'murmur-ai[kafka]'        # or [nats] / [rabbitmq] / [redis]
+uv add 'murmur-runtime[kafka]'        # or [nats] / [rabbitmq] / [redis]
 export ANTHROPIC_API_KEY=...
 ```
 
@@ -84,7 +84,7 @@ murmur worker start \
 
 For local development, add `--reload` to auto-restart the worker on file
 changes (uses `watchfiles`, same library as FastStream + uvicorn —
-install via `uv add 'murmur-ai[reload]'`):
+install via `uv add 'murmur-runtime[reload]'`):
 
 ```bash
 murmur worker start \

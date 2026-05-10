@@ -23,7 +23,7 @@ issues; critical issues (remote code execution, credential exposure,
 unbounded resource consumption with no operator opt-in) get an
 out-of-band release.
 
-[repo]: https://github.com/murmur-ai/murmur
+[repo]: https://github.com/murmur-runtime/murmur
 
 ---
 
@@ -47,7 +47,7 @@ Same gate is used by `_PolicyMCPToolset` for MCP calls and by
 `make_spawn_agents_tool` for child dispatch — there is no second
 code path that bypasses the executor.
 
-[tools]: https://github.com/murmur-ai/murmur/blob/main/docs/concepts/tools.md
+[tools]: https://github.com/murmur-runtime/murmur/blob/main/docs/concepts/tools.md
 
 ### Cascading-spawn budget exhaustion
 
@@ -62,7 +62,7 @@ consumers race the same publisher-side counter). For hard
 cross-machine caps, operators shape upstream task supply with
 `gather(max_concurrency=N)` plus broker-level rate limiting.
 
-[cost]: https://github.com/murmur-ai/murmur/blob/main/docs/concepts/cost.md
+[cost]: https://github.com/murmur-runtime/murmur/blob/main/docs/concepts/cost.md
 
 ### Spawn-depth runaway (partial)
 
@@ -92,7 +92,7 @@ on the same `tool_name` replaces; an empty-enrollment serve raises
 
 See [MCP — expose side][mcp-expose].
 
-[mcp-expose]: https://github.com/murmur-ai/murmur/blob/main/docs/concepts/mcp.md
+[mcp-expose]: https://github.com/murmur-runtime/murmur/blob/main/docs/concepts/mcp.md
 
 ### Wire-format spoofing
 
@@ -147,7 +147,7 @@ DLP rules. Operators who need exfiltration prevention layer that on
 at the tool implementation (the body of the registered tool) or
 upstream (e.g. a proxy intercepting outbound network calls).
 
-[events]: https://github.com/murmur-ai/murmur/blob/main/docs/concepts/events.md
+[events]: https://github.com/murmur-runtime/murmur/blob/main/docs/concepts/events.md
 
 ### CPU / memory / crash isolation within a process
 
@@ -321,7 +321,7 @@ without reshaping their context flow.
 - Set `max_concurrency` on the factory; the per-call cap is your
   hard ceiling on simultaneous in-flight children.
 
-[rb]: https://github.com/murmur-ai/murmur/blob/main/docs/concepts/backends.md
+[rb]: https://github.com/murmur-runtime/murmur/blob/main/docs/concepts/backends.md
 
 ---
 
@@ -356,7 +356,7 @@ them are cheap.
 
 Murmur is pre-1.0. Breaking changes to the trust model, the tool
 gating semantics, or the wire envelope will be called out in
-[CHANGELOG.md](https://github.com/murmur-ai/murmur/blob/main/CHANGELOG.md)
+[CHANGELOG.md](https://github.com/murmur-runtime/murmur/blob/main/CHANGELOG.md)
 under an explicit `Security` section.
 Operators who rely on a specific guarantee should pin to a minor
-version (`murmur-ai>=0.x.y,<0.x+1.0`) until the project reaches 1.0.
+version (`murmur-runtime>=0.x.y,<0.x+1.0`) until the project reaches 1.0.

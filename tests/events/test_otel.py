@@ -352,5 +352,5 @@ def test_construction_without_otel_extra_raises_clear_importerror(
     sys.modules.pop("murmur.events.otel", None)
     otel_mod = importlib.import_module("murmur.events.otel")
 
-    with pytest.raises(ImportError, match=r"murmur-ai\[otel\]"):
+    with pytest.raises(ImportError, match=r"murmur-runtime\[otel\]"):
         otel_mod.OTelMetricsEmitter()

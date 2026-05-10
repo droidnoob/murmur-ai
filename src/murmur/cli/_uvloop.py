@@ -41,7 +41,7 @@ def install_uvloop_policy(enabled: bool) -> bool:
 
     Caveats logged to stderr (never stdout) when the operator asked
     but can't have it: missing extra → suggests
-    ``pip install 'murmur-ai[uvloop]'``; Windows → falls back silently
+    ``pip install 'murmur-runtime[uvloop]'``; Windows → falls back silently
     after a one-line warning. Both cases continue with the default loop.
     """
     if not enabled:
@@ -58,7 +58,7 @@ def install_uvloop_policy(enabled: bool) -> bool:
         sys.stderr.write(
             "[uvloop] requested but uvloop not installed; "
             "falling back to default loop. "
-            "Install: pip install 'murmur-ai[uvloop]'\n"
+            "Install: pip install 'murmur-runtime[uvloop]'\n"
         )
         return False
     import asyncio

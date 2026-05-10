@@ -15,7 +15,7 @@ line for any real server you want to consume:
 See also: ``docs/concepts/mcp.md``.
 
 Prereqs:
-    pip install murmur-ai
+    pip install murmur-runtime
     export ANTHROPIC_API_KEY=...
 
 Run:
@@ -54,7 +54,7 @@ async def main() -> int:
     if not _STUB.exists():
         print(
             f"bundled MCP stub not found at {_STUB}. "
-            "This example expects to run from the murmur-ai source tree; "
+            "This example expects to run from the murmur-runtime source tree; "
             "swap the mcp_stdio(...) line for a real server you have installed.",
             file=sys.stderr,
         )

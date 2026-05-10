@@ -1,5 +1,5 @@
 {
-  "name": "@murmur-ai/client",
+  "name": "@murmur/client",
   "version": "0.1.0",
   "description": "TypeScript client for Murmur agent servers — browser + Node compatible.",
   "type": "module",

@@ -3,7 +3,7 @@
 Constructed lazily by :meth:`AgentServer.serve_mcp` so the heavy
 ``mcp`` SDK only loads when the operator actually opts in. Importing
 this module raises ``ImportError`` (with a clear message) when the
-``murmur-ai[mcp-server]`` extra isn't installed.
+``murmur-runtime[mcp-server]`` extra isn't installed.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ try:
     from mcp.server.fastmcp import FastMCP
 except ImportError as exc:  # pragma: no cover — exercised when extra missing
     raise ImportError(
-        "The murmur-ai[mcp-server] extra is required to expose agents over MCP. "
-        "Install it with: pip install 'murmur-ai[mcp-server]'"
+        "The murmur-runtime[mcp-server] extra is required to expose agents over MCP. "
+        "Install it with: pip install 'murmur-runtime[mcp-server]'"
     ) from exc
 
 if TYPE_CHECKING:

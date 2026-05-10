@@ -287,7 +287,7 @@ start`) accept `--uvloop` to swap stdlib's asyncio for
 around libuv that's typically 2-4× faster on the scheduler hot path:
 
 ```bash
-pip install 'murmur-ai[uvloop]'    # POSIX only — no Windows wheels
+pip install 'murmur-runtime[uvloop]'    # POSIX only — no Windows wheels
 murmur serve --uvloop --port 8420
 murmur worker start --agents researcher --broker redis://… --uvloop
 # or fleet-wide via env:

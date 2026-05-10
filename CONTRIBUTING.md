@@ -12,7 +12,7 @@ opening a PR.
 ## Local setup
 
 ```bash
-git clone https://github.com/murmur-ai/murmur && cd murmur
+git clone https://github.com/murmur-runtime/murmur && cd murmur
 uv sync --group dev                      # core deps + dev tools
 uv run pre-commit install                # one-time per clone
 uv run pytest -m "not integration" -q    # 556 unit tests

@@ -14,7 +14,7 @@ It is **not** a framework for defining agent behavior. It is **infrastructure** 
 
 PydanticAI handles single-agent execution (LLM calls, tools, structured output, validation). FastStream handles broker-backed distribution. Murmur owns the orchestration layer between them — and **hides both behind its own public API.**
 
-Repository: `murmur-ai` · PyPI distribution: `murmur-ai` · Import package: `murmur`.
+Repository: `murmur-runtime` · PyPI distribution: `murmur-runtime` · Import package: `murmur`.
 
 ---
 
@@ -443,14 +443,14 @@ structlog ← logging
 ### Broker extras
 
 ```
-murmur-ai[kafka]      → faststream[kafka]
-murmur-ai[nats]       → faststream[nats]
-murmur-ai[rabbitmq]   → faststream[rabbit]
-murmur-ai[redis]      → faststream[redis]
-murmur-ai[all]        → all brokers
+murmur-runtime[kafka]      → faststream[kafka]
+murmur-runtime[nats]       → faststream[nats]
+murmur-runtime[rabbitmq]   → faststream[rabbit]
+murmur-runtime[redis]      → faststream[redis]
+murmur-runtime[all]        → all brokers
 ```
 
-ThreadBackend has no broker dep — `pip install murmur-ai` works out of the box.
+ThreadBackend has no broker dep — `pip install murmur-runtime` works out of the box.
 
 ---
 

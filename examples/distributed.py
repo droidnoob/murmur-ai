@@ -18,7 +18,7 @@ to see the distributed shape with no code change to the agent.
 See also: ``docs/concepts/backends.md``, ``docs/guides/distributed.md``.
 
 Prereqs:
-    pip install murmur-ai
+    pip install murmur-runtime
     export ANTHROPIC_API_KEY=...
 
 Run:

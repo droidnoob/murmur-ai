@@ -115,11 +115,11 @@ automatically. Plain runtimes need explicit shutdown.
 
 The opposite direction: a Murmur agent **becomes** an MCP tool that
 Claude Desktop, Cursor, the MCP Inspector, or any other MCP-aware
-client invokes. Lives behind the `murmur-ai[mcp-server]` extra so the
+client invokes. Lives behind the `murmur-runtime[mcp-server]` extra so the
 SDK only loads when the operator opts in.
 
 ```bash
-pip install 'murmur-ai[mcp-server]'
+pip install 'murmur-runtime[mcp-server]'
 ```
 
 ```python

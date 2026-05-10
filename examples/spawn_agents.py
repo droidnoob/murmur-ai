@@ -14,7 +14,7 @@ See also: ``docs/concepts/agents.md`` (Templates + LLM-driven fan-out
 sections), ``docs/api/tools.md``.
 
 Prereqs:
-    pip install murmur-ai
+    pip install murmur-runtime
     export ANTHROPIC_API_KEY=...
 
 Run:

@@ -51,10 +51,10 @@ Supported URL schemes:
 
 | Scheme | Broker | Extra |
 |---|---|---|
-| `kafka://` | Apache Kafka | `murmur-ai[kafka]` |
-| `nats://` | NATS | `murmur-ai[nats]` |
-| `amqp://` | RabbitMQ | `murmur-ai[rabbitmq]` |
-| `redis://` | Redis Streams | `murmur-ai[redis]` |
+| `kafka://` | Apache Kafka | `murmur-runtime[kafka]` |
+| `nats://` | NATS | `murmur-runtime[nats]` |
+| `amqp://` | RabbitMQ | `murmur-runtime[rabbitmq]` |
+| `redis://` | Redis Streams | `murmur-runtime[redis]` |
 | `memory://` | In-process broker | bundled — for tests |
 
 Mental model: **`JobBackend` is a transport for `AsyncBackend`

@@ -9,7 +9,7 @@ Opt-in at two levels:
    exposed by default. Use :meth:`AgentServer.register_mcp` to
    explicitly enroll each agent. ``register()`` is HTTP-only.
 
-The implementation lives behind the ``murmur-ai[mcp-server]`` extra so
+The implementation lives behind the ``murmur-runtime[mcp-server]`` extra so
 ``import murmur.server`` doesn't pull the MCP SDK. Symbols here are
 imported lazily by :class:`AgentServer` — they raise a clear,
 actionable error if the extra wasn't installed.

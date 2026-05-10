@@ -179,4 +179,4 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/droidnoob/murmur-ai
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/murmur-ai/
+      link: https://pypi.org/project/murmur-runtime/

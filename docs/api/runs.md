@@ -77,7 +77,7 @@ installed. They show up only when accessed.
 
 ### `SQLiteRunStore`
 
-Requires `pip install "murmur-ai[sqlite]"`.
+Requires `pip install "murmur-runtime[sqlite]"`.
 
 ::: murmur.runs.sqlite.SQLiteRunStore
     options:
@@ -86,7 +86,7 @@ Requires `pip install "murmur-ai[sqlite]"`.
 
 ### `RocksDBRunStore`
 
-Requires `pip install "murmur-ai[rocksdb]"`.
+Requires `pip install "murmur-runtime[rocksdb]"`.
 
 ::: murmur.runs.rocksdb.RocksDBRunStore
     options:
@@ -95,7 +95,7 @@ Requires `pip install "murmur-ai[rocksdb]"`.
 
 ### `RedisRunStore`
 
-Requires `pip install "murmur-ai[redis-runstore]"`.
+Requires `pip install "murmur-runtime[redis-runstore]"`.
 
 ::: murmur.runs.redis.RedisRunStore
     options:

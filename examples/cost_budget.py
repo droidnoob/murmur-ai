@@ -13,7 +13,7 @@ semantic. The next call's pre-check then hard-stops.
 See also: ``docs/concepts/cost.md``.
 
 Prereqs:
-    pip install murmur-ai
+    pip install murmur-runtime
     export ANTHROPIC_API_KEY=...
 
 Run:

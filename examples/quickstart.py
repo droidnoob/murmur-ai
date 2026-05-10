@@ -8,7 +8,7 @@ See also: ``docs/concepts/runtime.md``, ``docs/concepts/agents.md``.
 Pairs with the tutorial at ``docs/getting-started/quickstart.md``.
 
 Prereqs:
-    pip install murmur-ai
+    pip install murmur-runtime
     export ANTHROPIC_API_KEY=...
 
 Run:

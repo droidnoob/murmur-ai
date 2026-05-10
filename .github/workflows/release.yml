@@ -1,15 +1,15 @@
 name: release
 
 # Tag-triggered release. Push ``vX.Y.Z`` and this workflow:
-#   1. Builds + publishes ``murmur-ai`` and ``murmur-client`` to PyPI
-#      (Trusted Publishing via OIDC — no tokens).
-#   2. Builds + publishes ``@murmur-ai/client`` to npm (uses NPM_TOKEN).
-#   3. Creates a GitHub Release with auto-generated notes from commits
+#   1. Builds + publishes ``murmur-runtime`` to PyPI (Trusted Publishing
+#      via OIDC — no tokens).
+#   2. Creates a GitHub Release with auto-generated notes from commits
 #      since the previous tag.
 #
-# All three packages must already report the same ``X.Y.Z`` as the tag —
-# the verification step below fails fast otherwise so you don't ship a
-# version mismatch.
+# ``murmur-client`` (PyPI) and ``@murmur/client`` (npm) ship from this
+# repo too, but are not yet wired into the release pipeline. Add their
+# build + publish steps once their first publish is unblocked
+# (PyPI pending publisher entry / npm token + scope).
 
 on:
   push:
@@ -27,7 +27,7 @@ concurrency:
 jobs:
   # --------------------------------------------------------------- verify
   # Fail fast if the tag and the in-tree versions disagree. Cheaper to
-  # catch here than mid-publish.
+  # catch here than mid-publish. Only checks files we publish from.
   verify:
     runs-on: ubuntu-latest
     outputs:
@@ -44,20 +44,11 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Tag → ${tag}, version → ${version}"
 
-      - name: Verify pyproject.toml versions match
+      - name: Verify pyproject.toml version matches
         run: |
           v="${{ steps.parse.outputs.version }}"
-          for f in pyproject.toml packages/murmur-client/pyproject.toml; do
-            grep -E "^version = \"${v}\"" "$f" \
-              || { echo "::error::${f} does not declare version ${v}"; exit 1; }
-          done
-
-      - name: Verify package.json version matches
-        run: |
-          v="${{ steps.parse.outputs.version }}"
-          jq -e --arg v "$v" '.version == $v' \
-            packages/js-client/package.json \
-            || { echo "::error::js-client/package.json does not declare ${v}"; exit 1; }
+          grep -E "^version = \"${v}\"" pyproject.toml \
+            || { echo "::error::pyproject.toml does not declare version ${v}"; exit 1; }
 
       - name: Verify __version__ matches
         run: |
@@ -77,60 +68,15 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Build murmur-ai
-        run: uv build --out-dir dist-murmur-ai
+      - name: Build murmur-runtime
+        run: uv build --out-dir dist
 
-      - name: Build murmur-client
-        run: uv build --out-dir dist-murmur-client packages/murmur-client
-
-      - name: Publish murmur-ai
+      - name: Publish murmur-runtime
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-murmur-ai
-
-      - name: Publish murmur-client
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-murmur-client
-
-  # ----------------------------------------------------------------- npm
-  npm:
-    needs: verify
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/js-client
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Install
-        run: npm ci || npm install
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test
-        run: npm test
-
-      - name: Build
-        run: npm run build
-
-      - name: Publish
-        # ``--access public`` is required for the first publish of a
-        # scoped package (``@murmur-ai/...``) — scoped packages default
-        # to private otherwise. Idempotent on subsequent publishes.
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # -------------------------------------------------------- github release
   github-release:
-    needs: [pypi, npm]
+    needs: pypi
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

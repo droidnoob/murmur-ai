@@ -4,9 +4,9 @@ Releases ship three artifacts off one git tag:
 
 | Artifact | Registry |
 |---|---|
-| `murmur-ai` | [PyPI](https://pypi.org/project/murmur-ai/) |
+| `murmur-runtime` | [PyPI](https://pypi.org/project/murmur-runtime/) |
 | `murmur-client` | [PyPI](https://pypi.org/project/murmur-client/) |
-| `@murmur-ai/client` | [npm](https://www.npmjs.com/package/@murmur-ai/client) |
+| `@murmur/client` | [npm](https://www.npmjs.com/package/@murmur/client) |
 
 The whole pipeline runs from `.github/workflows/release.yml` on a `v*` tag push.
 
@@ -21,18 +21,18 @@ Add a Trusted Publisher entry on PyPI for each project. PyPI
 verifies the GitHub OIDC token at publish time — no long-lived
 credentials live in the repo.
 
-For both `murmur-ai` and `murmur-client`, register a publisher at:
+For both `murmur-runtime` and `murmur-client`, register a publisher at:
 
-- `https://pypi.org/manage/project/murmur-ai/settings/publishing/`
+- `https://pypi.org/manage/project/murmur-runtime/settings/publishing/`
 - `https://pypi.org/manage/project/murmur-client/settings/publishing/`
 
 Use these values:
 
 | Field | Value |
 |---|---|
-| PyPI Project Name | `murmur-ai` / `murmur-client` |
+| PyPI Project Name | `murmur-runtime` / `murmur-client` |
 | Owner | `droidnoob` |
-| Repository name | `murmur-ai` |
+| Repository name | `murmur-runtime` |
 | Workflow name | `release.yml` |
 | Environment name | `pypi` |
 
@@ -62,7 +62,7 @@ trusted publishing).
    - Value: the token
 
 The first publish needs `--access public` (the workflow passes it
-automatically; required because `@murmur-ai/...` is a scoped package
+automatically; required because `@murmur/...` is a scoped package
 and scoped packages default to private).
 
 ## Cutting a release
@@ -93,10 +93,10 @@ mismatched release.
 After the tag push, the workflow:
 
 1. **`verify`** — confirms tag and in-tree versions agree.
-2. **`pypi`** — builds + publishes `murmur-ai` and `murmur-client`
+2. **`pypi`** — builds + publishes `murmur-runtime` and `murmur-client`
    (Trusted Publishing OIDC).
 3. **`npm`** — typechecks, tests, builds, publishes
-   `@murmur-ai/client` with provenance.
+   `@murmur/client` with provenance.
 4. **`github-release`** — creates a GitHub Release with auto-generated
    notes pulled from commit subjects since the previous tag.
 

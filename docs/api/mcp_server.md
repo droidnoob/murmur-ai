@@ -2,10 +2,10 @@
 
 MCP expose side — Murmur agents callable as MCP tools by Claude
 Desktop / Cursor / the MCP Inspector / any other MCP-aware client.
-Behind the `murmur-ai[mcp-server]` extra.
+Behind the `murmur-runtime[mcp-server]` extra.
 
 ```bash
-pip install 'murmur-ai[mcp-server]'
+pip install 'murmur-runtime[mcp-server]'
 ```
 
 The two opt-in tiers (surface + per-agent) live as methods on

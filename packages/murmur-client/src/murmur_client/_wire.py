@@ -1,7 +1,7 @@
 """Wire-format types and helpers used by the lean HTTP client.
 
 Mirrors the Pydantic models that :class:`murmur.AgentServer` serialises
-on the wire. The client deliberately does not depend on ``murmur-ai`` —
+on the wire. The client deliberately does not depend on ``murmur-runtime`` —
 each side defines its own copies so the heavy server-side install
 (PydanticAI, FastStream, structlog …) doesn't get pulled into
 client-only deployments. Round-trip identity comes from matching the

@@ -30,17 +30,17 @@ The README has the pitch and a quickstart. This file is the user manual: every p
 
 ```bash
 # Base install — ThreadBackend works immediately, no broker required.
-uv add murmur-ai
+uv add murmur-runtime
 
 # Optional broker support. Pick what you actually deploy against.
-uv add 'murmur-ai[kafka]'
-uv add 'murmur-ai[nats]'
-uv add 'murmur-ai[rabbitmq]'
-uv add 'murmur-ai[redis]'
-uv add 'murmur-ai[all]'         # all four
+uv add 'murmur-runtime[kafka]'
+uv add 'murmur-runtime[nats]'
+uv add 'murmur-runtime[rabbitmq]'
+uv add 'murmur-runtime[redis]'
+uv add 'murmur-runtime[all]'         # all four
 
 # Server (FastAPI host for your agents).
-uv add 'murmur-ai[server]'      # adds fastapi, uvicorn, sse-starlette
+uv add 'murmur-runtime[server]'      # adds fastapi, uvicorn, sse-starlette
 
 # Lightweight HTTP client (no PydanticAI, no FastStream — talks to a server).
 # Currently shipped from the same wheel; will split into its own package later.
@@ -69,7 +69,7 @@ from murmur import (
 )
 
 # Lazy-imported (require optional extras):
-from murmur.server import AgentServer, ErrorResponse   # needs murmur-ai[server]
+from murmur.server import AgentServer, ErrorResponse   # needs murmur-runtime[server]
 from murmur.worker import Worker                       # always available
 from murmur_client import MurmurClient, Run            # lightweight HTTP client
 ```

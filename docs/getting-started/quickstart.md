@@ -10,13 +10,13 @@ across many tasks. Distributed mode is one constructor change away — see
 ```bash
 uv init my-murmur-app
 cd my-murmur-app
-uv add murmur-ai
+uv add murmur-runtime
 export ANTHROPIC_API_KEY=...
 ```
 
-`murmur-ai` pulls in PydanticAI as a transitive — you don't import from
+`murmur-runtime` pulls in PydanticAI as a transitive — you don't import from
 it directly. AsyncBackend works out of the box; broker extras
-(`murmur-ai[kafka]` etc.) come later when you go distributed.
+(`murmur-runtime[kafka]` etc.) come later when you go distributed.
 
 ## 2. Define the agent
 

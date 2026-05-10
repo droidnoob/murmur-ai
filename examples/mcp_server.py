@@ -22,7 +22,7 @@ Run modes:
 Pairs with: ``examples/mcp.py`` (consume side), ``docs/concepts/mcp.md``.
 
 Prereqs:
-    pip install 'murmur-ai[mcp-server]'
+    pip install 'murmur-runtime[mcp-server]'
     export ANTHROPIC_API_KEY=...
 
 Run (HTTP for easy curl/Inspector testing):

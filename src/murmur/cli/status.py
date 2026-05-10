@@ -79,7 +79,7 @@ async def _run_status(args: argparse.Namespace) -> int:
     except ImportError:
         sys.stderr.write(
             "murmur status requires httpx. Install via: "
-            "pip install 'murmur-ai[server]'\n"
+            "pip install 'murmur-runtime[server]'\n"
         )
         return 2
 

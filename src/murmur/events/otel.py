@@ -7,7 +7,7 @@ the OpenTelemetry GenAI metric histograms (`gen_ai.client.token.usage`,
 `gen_ai.client.operation.duration`) plus a small set of Murmur-flavoured
 counters for tool calls and typed-error rejections.
 
-Gated behind the ``murmur-ai[otel]`` extra. Construction without the OTel
+Gated behind the ``murmur-runtime[otel]`` extra. Construction without the OTel
 SDK installed raises a clear :class:`ImportError` rather than failing
 mid-run.
 
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 _INSTALL_HINT = (
     "OTelMetricsEmitter requires the optional 'otel' extra — "
-    "install with `pip install murmur-ai[otel]`."
+    "install with `pip install murmur-runtime[otel]`."
 )
 
 
@@ -88,7 +88,7 @@ class OTelMetricsEmitter:
         where multiple emitters share an :class:`InMemoryMetricReader`.
 
         Raises :class:`ImportError` with an install hint when the
-        ``murmur-ai[otel]`` extra isn't present.
+        ``murmur-runtime[otel]`` extra isn't present.
         """
         try:
             from opentelemetry import metrics
