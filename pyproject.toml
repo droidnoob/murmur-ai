@@ -82,7 +82,7 @@ mcp-server = ["mcp>=1.27,<2.0"]
 # raises a clear ImportError. Wire your own exporter (OTLP gRPC/HTTP,
 # Prometheus, etc.) on top — Murmur stays out of exporter config.
 otel = [
-    "opentelemetry-api>=1.39,<1.40",
+    "opentelemetry-api>=1.39,<1.42",
     "opentelemetry-sdk>=1.39,<1.40",
 ]
 
@@ -115,7 +115,7 @@ all = [
     # mcp expose
     "mcp>=1.27,<2.0",
     # otel
-    "opentelemetry-api>=1.39,<1.40",
+    "opentelemetry-api>=1.39,<1.42",
     "opentelemetry-sdk>=1.39,<1.40",
     # reload (dev-time but harmless in prod when unused)
     "watchfiles>=0.20,<2",
@@ -173,7 +173,7 @@ dev = [
     # OTel SDK + API — pulled into dev so the OTelMetricsEmitter tests run
     # against the in-memory metric reader without requiring `[otel]`. Range
     # follows PydanticAI's pin to keep the resolver happy.
-    "opentelemetry-api>=1.39,<1.40",
+    "opentelemetry-api>=1.39,<1.42",
     "opentelemetry-sdk>=1.39,<1.40",
     # uvloop is an optional extra at runtime (POSIX-only, pulled in via
     # ``murmur-runtime[uvloop]``), but ty's static import resolution fails
