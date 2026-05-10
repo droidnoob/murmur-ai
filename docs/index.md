@@ -12,14 +12,14 @@ hide:
 <p align="center">
 <a href="https://pypi.org/project/murmur-ai/"><img src="https://img.shields.io/pypi/v/murmur-ai.svg" alt="PyPI"></a>
 <a href="https://pypi.org/project/murmur-ai/"><img src="https://img.shields.io/pypi/pyversions/murmur-ai.svg" alt="Python versions"></a>
-<a href="https://github.com/murmur-ai/murmur/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+<a href="https://github.com/droidnoob/murmur-ai/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
 </p>
 
 ---
 
-**Documentation:** [https://murmur-ai.github.io/murmur/](https://murmur-ai.github.io/murmur/)
+**Documentation:** [https://droidnoob.github.io/murmur-ai/](https://droidnoob.github.io/murmur-ai/)
 
-**Source:** [https://github.com/murmur-ai/murmur](https://github.com/murmur-ai/murmur)
+**Source:** [https://github.com/droidnoob/murmur-ai](https://github.com/droidnoob/murmur-ai)
 
 ---
 

@@ -84,7 +84,7 @@ value of propagation lands alongside that future work.
 ## Worked example — tight budget hits the cap
 
 The full runnable script is at
-[`examples/cost_budget.py`](https://github.com/murmur-ai/murmur/blob/main/examples/cost_budget.py).
+[`examples/cost_budget.py`](https://github.com/droidnoob/murmur-ai/blob/main/examples/cost_budget.py).
 The shape:
 
 ```python

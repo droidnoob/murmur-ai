@@ -15,7 +15,7 @@ export ANTHROPIC_API_KEY=...
 ```
 
 A self-contained run that uses an in-process broker (no external
-services) lives at [`examples/distributed.py`](https://github.com/murmur-ai/murmur/blob/main/examples/distributed.py)
+services) lives at [`examples/distributed.py`](https://github.com/droidnoob/murmur-ai/blob/main/examples/distributed.py)
 — same agent code, same wire envelope as a real Kafka deployment, just
 the broker swapped out. Drop it into your project and run with
 `uv run python distributed.py`.

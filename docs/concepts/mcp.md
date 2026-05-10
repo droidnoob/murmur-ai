@@ -259,4 +259,4 @@ correlate per-server activity from a single `RuntimeEvent` stream.
 
 A runnable variant against the bundled stub server (no third-party
 install) lives at
-[`examples/mcp.py`](https://github.com/murmur-ai/murmur/blob/main/examples/mcp.py).
+[`examples/mcp.py`](https://github.com/droidnoob/murmur-ai/blob/main/examples/mcp.py).

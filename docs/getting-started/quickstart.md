@@ -20,7 +20,7 @@ it directly. AsyncBackend works out of the box; broker extras
 
 ## 2. Define the agent
 
-Create `quickstart.py` (this matches [`examples/quickstart.py`](https://github.com/murmur-ai/murmur/blob/main/examples/quickstart.py)
+Create `quickstart.py` (this matches [`examples/quickstart.py`](https://github.com/droidnoob/murmur-ai/blob/main/examples/quickstart.py)
 verbatim):
 
 ```python

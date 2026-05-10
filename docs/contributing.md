@@ -1,12 +1,12 @@
 # Contributing
 
 The canonical contributor guide lives at the project root —
-[`CONTRIBUTING.md`](https://github.com/murmur-ai/murmur/blob/main/CONTRIBUTING.md).
+[`CONTRIBUTING.md`](https://github.com/droidnoob/murmur-ai/blob/main/CONTRIBUTING.md).
 
 ## TL;DR
 
 ```bash
-git clone https://github.com/murmur-ai/murmur && cd murmur
+git clone https://github.com/droidnoob/murmur-ai && cd murmur-ai
 uv sync --group dev
 uv run pre-commit install
 uv run pytest -m "not integration" -q     # 556 unit tests
@@ -54,6 +54,6 @@ guide on GitHub.
 
 ## See also
 
-- [GitHub repository](https://github.com/murmur-ai/murmur)
+- [GitHub repository](https://github.com/droidnoob/murmur-ai)
 - [Issue tracker (bd)](https://github.com/steveyegge/beads)
 - [Architecture](concepts/architecture.md)

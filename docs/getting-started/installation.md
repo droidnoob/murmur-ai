@@ -77,7 +77,7 @@ All three implement the same `RunStore` Protocol and pass the same
 ## Development install
 
 ```bash
-git clone https://github.com/murmur-ai/murmur && cd murmur
+git clone https://github.com/droidnoob/murmur-ai && cd murmur-ai
 uv sync --group dev
 uv run pytest -m "not integration" -q     # 556 tests, all green
 ```

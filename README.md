@@ -10,12 +10,12 @@
 [![pydantic-ai](https://img.shields.io/badge/pydantic--ai-1.87-purple)](https://ai.pydantic.dev/)
 [![FastStream](https://img.shields.io/badge/faststream-0.6-orange)](https://faststream.ag2.ai/latest/)
 [![PyPI](https://img.shields.io/badge/pypi-murmur--ai-blueviolet)](https://pypi.org/project/murmur-ai/)
-[![Status](https://img.shields.io/badge/status-pre--alpha-lightgrey)](#status)
+[![Docs](https://img.shields.io/badge/docs-droidnoob.github.io-blue)](https://droidnoob.github.io/murmur-ai/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 A Python multi-agent orchestration runtime — *infrastructure* for spawning, distributing, and coordinating LLM-based agents reliably at scale. Strictly typed, broker-agnostic, zero-config to start, distributed when you need it.
 
-📖 **[Documentation →](https://murmur-ai.github.io/murmur/)** · 🧭 **[Concepts →](https://murmur-ai.github.io/murmur/concepts/architecture/)** · 📚 **[API reference →](https://murmur-ai.github.io/murmur/api/)** · 🛠️ **[Contributing →](CONTRIBUTING.md)** · 🔒 **[Security →](SECURITY.md)**
+📖 **[Documentation →](https://droidnoob.github.io/murmur-ai/)** · 🧭 **[Concepts →](https://droidnoob.github.io/murmur-ai/concepts/architecture/)** · 📚 **[API reference →](https://droidnoob.github.io/murmur-ai/api/)** · 🛠️ **[Contributing →](CONTRIBUTING.md)** · 🔒 **[Security →](SECURITY.md)**
 
 ---
 
@@ -59,7 +59,7 @@ The same code runs locally on `asyncio` or distributed across a worker fleet on 
 
 - **Fully typed, no exceptions.** Every public function annotated. `ty` (Astral's Rust-based type checker) runs in CI. PEP 561 marker shipped.
 
-- **Migration paths.** Adopt Murmur incrementally — wrap an existing PydanticAI agent with `from_pydantic_ai()`, expose any Murmur agent as a FastStream subscriber via `as_faststream_handler()`. Migration guides for [PydanticAI](https://murmur-ai.github.io/murmur/guides/migration-pydantic-ai/), [FastStream](https://murmur-ai.github.io/murmur/guides/migration-faststream/), and [raw asyncio](https://murmur-ai.github.io/murmur/guides/migration-asyncio/).
+- **Migration paths.** Adopt Murmur incrementally — wrap an existing PydanticAI agent with `from_pydantic_ai()`, expose any Murmur agent as a FastStream subscriber via `as_faststream_handler()`. Migration guides for [PydanticAI](https://droidnoob.github.io/murmur-ai/guides/migration-pydantic-ai/), [FastStream](https://droidnoob.github.io/murmur-ai/guides/migration-faststream/), and [raw asyncio](https://droidnoob.github.io/murmur-ai/guides/migration-asyncio/).
 
 ## Architecture
 
@@ -222,7 +222,7 @@ async def on_complete(task_id: str, agent_name: str, duration_ms: int) -> None:
 await worker.start()
 ```
 
-The worker's lifecycle, heartbeat, and abandoned-pending-entry recovery are handled by Murmur. See [Distributed deployments](https://murmur-ai.github.io/murmur/guides/distributed/).
+The worker's lifecycle, heartbeat, and abandoned-pending-entry recovery are handled by Murmur. See [Distributed deployments](https://droidnoob.github.io/murmur-ai/guides/distributed/).
 
 ### Observe
 

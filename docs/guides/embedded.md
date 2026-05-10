@@ -17,7 +17,7 @@ A working end-to-end script — same `Agent` as the
 [Quickstart](../getting-started/quickstart.md), mounted via
 `AgentRouter`, exercised both over HTTP (httpx against the in-process
 ASGI app) and via the in-process `LocalClient` — lives at
-[`examples/embedded.py`](https://github.com/murmur-ai/murmur/blob/main/examples/embedded.py).
+[`examples/embedded.py`](https://github.com/droidnoob/murmur-ai/blob/main/examples/embedded.py).
 
 ## Why embed
 
@@ -155,6 +155,6 @@ embedded pattern is how you compose them in.
 
 - **Run a fleet behind your app** — [Distributed deployments](distributed.md).
 - **Live event stream over your own SSE route** — [`SSEEventEmitter` setup](../concepts/events.md#sseeventemitter)
-  and the [`events_dashboard.py` example](https://github.com/murmur-ai/murmur/blob/main/examples/events_dashboard.py).
+  and the [`events_dashboard.py` example](https://github.com/droidnoob/murmur-ai/blob/main/examples/events_dashboard.py).
 - **Cap costs per request** — [`TokenBudget`](../concepts/cost.md).
 - **Decompose work via the LLM inside an HTTP handler** — [Agents — LLM-driven fan-out](../concepts/agents.md#llm-driven-fan-out-with-spawn_agents).
