@@ -1,11 +1,11 @@
 site_name: Murmur
 site_description: Production runtime for multi-agent LLM systems.
-site_url: https://murmur-ai.github.io/murmur/
+site_url: https://droidnoob.github.io/murmur-ai/
 site_author: Murmur contributors
 copyright: Copyright &copy; 2026 Murmur contributors
 
-repo_url: https://github.com/murmur-ai/murmur
-repo_name: murmur-ai/murmur
+repo_url: https://github.com/droidnoob/murmur-ai
+repo_name: droidnoob/murmur-ai
 edit_uri: edit/main/docs/
 
 docs_dir: docs
@@ -177,6 +177,6 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/murmur-ai/murmur
+      link: https://github.com/droidnoob/murmur-ai
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/murmur-ai/

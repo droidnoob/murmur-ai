@@ -26,7 +26,7 @@ HTTP client. Use when calling a remote `AgentServer` over the network.
 In-process client. Use when calling agents mounted in the same Python
 process (typically via `AgentRouter`).
 
-::: murmur_client.LocalClient
+::: murmur.client.LocalClient
     options:
       heading_level: 3
       show_bases: false
