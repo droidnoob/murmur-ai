@@ -83,7 +83,7 @@ mcp-server = ["mcp>=1.27,<2.0"]
 # Prometheus, etc.) on top — Murmur stays out of exporter config.
 otel = [
     "opentelemetry-api>=1.39,<1.42",
-    "opentelemetry-sdk>=1.39,<1.40",
+    "opentelemetry-sdk>=1.39,<1.42",
 ]
 
 # uvloop — drop-in replacement for the stdlib asyncio event loop.
@@ -116,7 +116,7 @@ all = [
     "mcp>=1.27,<2.0",
     # otel
     "opentelemetry-api>=1.39,<1.42",
-    "opentelemetry-sdk>=1.39,<1.40",
+    "opentelemetry-sdk>=1.39,<1.42",
     # reload (dev-time but harmless in prod when unused)
     "watchfiles>=0.20,<2",
     # container backend
@@ -174,7 +174,7 @@ dev = [
     # against the in-memory metric reader without requiring `[otel]`. Range
     # follows PydanticAI's pin to keep the resolver happy.
     "opentelemetry-api>=1.39,<1.42",
-    "opentelemetry-sdk>=1.39,<1.40",
+    "opentelemetry-sdk>=1.39,<1.42",
     # uvloop is an optional extra at runtime (POSIX-only, pulled in via
     # ``murmur-runtime[uvloop]``), but ty's static import resolution fails
     # without it installed because ``cli/_uvloop.py`` does ``import uvloop``
