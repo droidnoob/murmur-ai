@@ -8,7 +8,7 @@ this module raises ``ImportError`` (with a clear message) when the
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from murmur.mcp_server._bridge import make_agent_tool
 
@@ -61,12 +61,17 @@ async def serve(
     instructions: str | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
+    auth_token: str | None = None,
 ) -> None:
     """Build the MCP server and run it on the chosen transport.
 
     Blocks until the transport's run loop exits (Ctrl-C for stdio;
     standard ASGI shutdown for HTTP). Caller's responsibility to wrap
     in ``asyncio.run`` or compose with their own event loop.
+
+    ``auth_token`` (HTTP transport only): when set, requests must carry
+    ``Authorization: Bearer <token>`` or get a 401. Stdio is local-only
+    by definition so the token is ignored there.
     """
     fastmcp = build_fastmcp(
         runtime=runtime,
@@ -80,9 +85,68 @@ async def serve(
         # FastMCP's host / port are set on construction; thread them through.
         fastmcp.settings.host = host
         fastmcp.settings.port = port
-        await fastmcp.run_streamable_http_async()
+        if auth_token is None:
+            await fastmcp.run_streamable_http_async()
+        else:
+            # Replicate ``run_streamable_http_async`` so we can wrap the
+            # Starlette app with bearer-token middleware before serving.
+            import uvicorn
+
+            starlette_app = fastmcp.streamable_http_app()
+            _install_bearer_auth(starlette_app, expected_token=auth_token)
+            config = uvicorn.Config(
+                starlette_app,
+                host=host,
+                port=port,
+                log_level=fastmcp.settings.log_level.lower(),
+            )
+            await uvicorn.Server(config).serve()
     else:  # pragma: no cover — Literal narrowing prevents reaching here
         raise ValueError(f"unknown transport: {transport!r}")
+
+
+def _install_bearer_auth(starlette_app: Any, *, expected_token: str) -> None:
+    """Wrap ``starlette_app`` with a 401 guard that requires
+    ``Authorization: Bearer <expected_token>`` on every request.
+
+    Implemented as a Starlette pure-ASGI middleware via ``add_middleware``.
+    No path carve-outs — MCP HTTP doesn't expose health probes, every
+    request is data.
+    """
+    from starlette.middleware import Middleware
+    from starlette.responses import JSONResponse
+    from starlette.types import ASGIApp, Receive, Scope, Send
+
+    expected = f"Bearer {expected_token}"
+
+    class _BearerAuth:
+        def __init__(self, app: ASGIApp) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+            headers = {
+                k.decode("latin-1").lower(): v.decode("latin-1")
+                for k, v in scope.get("headers", [])
+            }
+            if headers.get("authorization") != expected:
+                resp = JSONResponse(
+                    status_code=401,
+                    content={"error": "Unauthorized"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+                await resp(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
+
+    # ``user_middleware`` is the public-ish slot Starlette consumes when
+    # building the ASGI stack. We append rather than re-construct to avoid
+    # disturbing whatever middleware FastMCP installed itself.
+    starlette_app.user_middleware.append(Middleware(_BearerAuth))
+    # Force a fresh middleware stack on next request.
+    starlette_app.middleware_stack = None
 
 
 __all__ = ["build_fastmcp", "serve"]

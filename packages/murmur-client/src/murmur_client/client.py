@@ -62,14 +62,23 @@ class MurmurClient:
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
         sync_transport: httpx.BaseTransport | None = None,
+        auth_token: str | None = None,
     ) -> None:
         self._server_url = server_url.rstrip("/")
         self._timeout = timeout
         self._sync_transport = sync_transport
+        self._auth_token: str | None = auth_token
+        # Default headers ride on every request from this client. When an
+        # ``auth_token`` is set we attach a static ``Authorization: Bearer``
+        # — matches the static-token guard on :class:`AgentServer`.
+        default_headers: dict[str, str] = {}
+        if auth_token is not None:
+            default_headers["Authorization"] = f"Bearer {auth_token}"
         self._http: httpx.AsyncClient = httpx.AsyncClient(
             base_url=self._server_url,
             timeout=timeout,
             transport=transport,
+            headers=default_headers,
         )
 
     async def __aenter__(self) -> Self:
@@ -222,6 +231,58 @@ class MurmurClient:
         )
         self._raise_for_status(r)
         return Run(client=self, run_id=r.json()["run_id"], target=target)
+
+    # ------------------------------------------------------------ telemetry
+
+    async def usage(
+        self,
+        *,
+        group_by: str | None = None,
+    ) -> dict[str, Any]:
+        """``GET /usage`` — token usage rollup.
+
+        Pass ``group_by="model"`` for per-model breakdown (server-side
+        rollup); omit for the runtime-wide total. Returns the raw JSON
+        payload — shape depends on ``group_by`` and is documented under
+        ``docs/concepts/cost.md``.
+        """
+        params = {"group_by": group_by} if group_by is not None else None
+        r = await self._http.get("/usage", params=params)
+        self._raise_for_status(r)
+        return dict(r.json())
+
+    async def runtime_stats(self) -> dict[str, Any]:
+        """``GET /runtime/stats`` — fleet-wide runtime + worker stats."""
+        r = await self._http.get("/runtime/stats")
+        self._raise_for_status(r)
+        return dict(r.json())
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        """``GET /tools`` — registered tool descriptors."""
+        r = await self._http.get("/tools")
+        self._raise_for_status(r)
+        return list(r.json())
+
+    async def stream_events(self) -> AsyncIterator[RunEvent]:
+        """Subscribe to ``GET /events/stream`` — every :class:`RuntimeEvent`
+        the server emits, not scoped to a single run.
+
+        Requires the server to have been built with an
+        :class:`SSEEventEmitter`. Yields decoded :class:`RunEvent` payloads;
+        terminate the iteration to disconnect.
+        """
+        async with self._http.stream("GET", "/events/stream") as response:
+            self._raise_for_status(response)
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[len("data:") :].strip()
+                if not payload:
+                    continue
+                try:
+                    yield RunEvent.model_validate_json(payload)
+                except Exception:  # pragma: no cover — malformed lines
+                    continue
 
     # ------------------------------------------------------------ run-handle internals
 

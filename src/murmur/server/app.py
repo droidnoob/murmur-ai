@@ -105,8 +105,16 @@ class AgentServer:
         sse_emitter: SSEEventEmitter | None = None,
         dashboard_dir: Path | None = None,
         event_store: EventStore | None = None,
+        auth_token: str | None = None,
     ) -> None:
         from murmur.runtime import AgentRuntime as _AgentRuntime
+
+        # Static bearer-token guard. ``None`` (default) means anonymous access
+        # — preserves the existing behaviour and aligns with the "exposure
+        # surfaces opt-in" rule. When set, every non-health route on the HTTP
+        # app and the MCP HTTP transport requires an
+        # ``Authorization: Bearer <token>`` header that matches.
+        self._auth_token: str | None = auth_token
 
         self._runtime: AgentRuntime = runtime or _AgentRuntime()
         self._run_store: RunStore = run_store or InMemoryRunStore()
@@ -249,6 +257,7 @@ class AgentServer:
             instructions=instructions,
             host=host,
             port=port,
+            auth_token=self._auth_token,
         )
 
     # ------------------------------------------------------------------ serve
@@ -337,6 +346,37 @@ class AgentServer:
             return await cast("Any", call_next)(request)
 
         _ = _shutdown_guard  # decorator does the wiring
+
+        # ---------- bearer-token auth (added last → runs outermost) -----------
+        # No-op when ``auth_token`` wasn't set — keeps the default surface
+        # unauth'd so embedded mounts and local dev work unchanged.
+        if self._auth_token is not None:
+            expected = f"Bearer {self._auth_token}"
+
+            @app.middleware("http")
+            async def _auth_guard(
+                request: Request,
+                call_next: Callable[[Request], Any],
+            ) -> Any:
+                # Health/readiness probes always bypass — orchestrators
+                # shouldn't need credentials to liveness-check us.
+                if request.url.path in {"/health", "/healthz", "/readyz"}:
+                    return await cast("Any", call_next)(request)
+                if request.headers.get("Authorization") != expected:
+                    return JSONResponse(
+                        status_code=401,
+                        content=ErrorResponse(
+                            error="Unauthorized",
+                            message="missing or invalid bearer token",
+                            request_id=request.headers.get(_REQUEST_ID_HEADER)
+                            or str(uuid.uuid4()),
+                        ).model_dump(),
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                return await cast("Any", call_next)(request)
+
+            _ = _auth_guard
+
         return app
 
     def _build_routes(self) -> APIRouter:

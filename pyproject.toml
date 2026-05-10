@@ -138,6 +138,12 @@ dev = [
     # follows PydanticAI's pin to keep the resolver happy.
     "opentelemetry-api>=1.39,<1.40",
     "opentelemetry-sdk>=1.39,<1.40",
+    # uvloop is an optional extra at runtime (POSIX-only, pulled in via
+    # ``murmur-ai[uvloop]``), but ty's static import resolution fails
+    # without it installed because ``cli/_uvloop.py`` does ``import uvloop``
+    # inside a try/except. Pulling it into dev keeps type-checking + the
+    # ``[uvloop]``-extra tests green on every dev machine and in CI.
+    'uvloop>=0.21,<1.0; sys_platform != "win32"',
 ]
 
 # Docs build — kept separate so user installs and the dev test suite never
