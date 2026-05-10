@@ -11,13 +11,13 @@ from typing import Any
 
 import pydantic_ai
 import pytest
-from murmur_client.client import Run
-from murmur_client.local import LocalClient
 from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
 from murmur.backends.async_backend import AsyncBackend
+from murmur.client import LocalClient
+from murmur.client import LocalRun as Run
 from murmur.context.null import NullContextPasser
 from murmur.core.errors import RegistryError
 from murmur.runs import RunState
@@ -140,6 +140,11 @@ async def test_submit_returns_run_handle(server: AgentServer) -> None:
 
             await asyncio.sleep(0.02)
         result = await run.result()
+        # ``run.result()`` widens to ``AgentResult | GroupResult``;
+        # ``echo`` is a single agent so we narrow before checking ``is_ok``.
+        from murmur.types import AgentResult
+
+        assert isinstance(result, AgentResult)
         assert result.is_ok()
 
 

@@ -7,7 +7,7 @@ this script:
 
 1. **HTTP-style** — an httpx call against the in-process ASGI app, exactly
    what an external service or browser would do.
-2. **In-process** — :class:`murmur_client.LocalClient` running inside the
+2. **In-process** — :class:`murmur.client.LocalClient` running inside the
    same Python process. No httpx round-trip. Skip this for the simplest
    integration; reach for it when an HTTP handler in your app wants to
    dispatch an agent without serializing through localhost.
@@ -38,10 +38,10 @@ import sys
 
 import httpx
 from fastapi import FastAPI
-from murmur_client import LocalClient
 from pydantic import BaseModel, Field
 
 from murmur import Agent, AgentRuntime, TaskSpec, TrustLevel
+from murmur.client import LocalClient
 from murmur.server import AgentRouter
 
 

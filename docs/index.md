@@ -7,7 +7,7 @@ hide:
   <img src="assets/logo.png" alt="Murmur" width="128" height="128">
 </p>
 
-<p align="center"><em>Agents that move as one.</em></p>
+<p align="center"><em>Production runtime for multi-agent LLM systems.</em></p>
 
 <p align="center">
 <a href="https://pypi.org/project/murmur-ai/"><img src="https://img.shields.io/pypi/v/murmur-ai.svg" alt="PyPI"></a>

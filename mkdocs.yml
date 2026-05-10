@@ -1,5 +1,5 @@
 site_name: Murmur
-site_description: A Python multi-agent orchestration runtime. Agents that move as one.
+site_description: Production runtime for multi-agent LLM systems.
 site_url: https://murmur-ai.github.io/murmur/
 site_author: Murmur contributors
 copyright: Copyright &copy; 2026 Murmur contributors

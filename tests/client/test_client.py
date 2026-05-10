@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import pydantic_ai
 import pytest
+from murmur_client import RegistryError, TaskSpec
 from murmur_client.client import MurmurClient, Run
 from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
@@ -20,10 +21,9 @@ from pydantic_ai.models.test import TestModel
 from murmur.agent import Agent
 from murmur.backends.async_backend import AsyncBackend
 from murmur.context.null import NullContextPasser
-from murmur.core.errors import RegistryError
 from murmur.runtime import AgentRuntime
 from murmur.server.app import AgentServer
-from murmur.types import TaskSpec, TrustLevel
+from murmur.types import TrustLevel
 
 
 class _Echo(BaseModel):

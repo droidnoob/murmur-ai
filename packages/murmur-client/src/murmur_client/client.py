@@ -25,11 +25,18 @@ from typing import Any, Protocol, Self
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from murmur._sync import reject_if_in_event_loop
-from murmur.core.errors import MurmurError, RegistryError
-from murmur.runs import RunEvent, RunStatus
-from murmur.server.errors import ErrorResponse, response_to_error
-from murmur.types import AgentResult, ResultMetadata, TaskSpec
+from murmur_client._wire import (
+    AgentResult,
+    ErrorResponse,
+    MurmurError,
+    RegistryError,
+    ResultMetadata,
+    RunEvent,
+    RunStatus,
+    TaskSpec,
+    reject_if_in_event_loop,
+    response_to_error,
+)
 
 _REQUEST_ID_HEADER = "X-Request-Id"
 

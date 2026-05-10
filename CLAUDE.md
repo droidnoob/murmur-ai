@@ -2,7 +2,7 @@
 
 Authoritative project context for Claude Code (and any other coding agent — this file is mirrored to `AGENTS.md`). Read this in full before making changes.
 
-> **Tagline:** *Agents that move as one.*
+> **Tagline:** *Production runtime for multi-agent LLM systems.*
 
 ---
 

@@ -11,6 +11,9 @@ Each file is a self-contained, runnable program. Set `ANTHROPIC_API_KEY`
 | [`cost_budget.py`](cost_budget.py) | `TokenBudget` exhaustion + `BUDGET_EXCEEDED` event | [`cost.md`](../docs/concepts/cost.md) |
 | [`events_dashboard.py`](events_dashboard.py) | `SSEEventEmitter` wired to a Starlette `/events/stream` | [`events.md`](../docs/concepts/events.md) |
 | [`mcp.py`](mcp.py) | Agent consuming an MCP server via `mcp_stdio` + `allow=` | [`mcp.md`](../docs/concepts/mcp.md) |
+| [`mcp_server.py`](mcp_server.py) | Expose a Murmur agent as an MCP tool via `AgentServer.serve_mcp` (stdio or HTTP) | [`mcp.md`](../docs/concepts/mcp.md) |
+| [`agent_team.py`](agent_team.py) | Coordinator + 2 typed delegates via `AgentTeam` and the auto-generated `delegate(...)` tool | [`coordination.md` — AgentTeam](../docs/concepts/coordination.md) |
+| [`worker_concurrency.py`](worker_concurrency.py) | Two competing `Worker`s tuned with `concurrency=` / `prefetch=` splitting a 32-task burst | [`backends.md`](../docs/concepts/backends.md), [distributed guide](../docs/guides/distributed.md) |
 | [`spawn_agents.py`](spawn_agents.py) | Orchestrator delegates to children via `spawn_agents` | [`agents.md` — Templates + fan-out](../docs/concepts/agents.md#templates--shared-config-across-a-fleet) |
 | [`memory_via_tool.py`](memory_via_tool.py) | Cross-run memory pattern: persistence via two tools | [`coordination.md`](../docs/concepts/coordination.md) |
 

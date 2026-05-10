@@ -1,16 +1,17 @@
 [project]
 name = "murmur-client"
-version = "0.0.0"
+version = "0.1.0"
 description = "Lightweight HTTP + in-process client for Murmur agent servers."
 readme = "README.md"
 authors = [
     { name = "droidnoob", email = "ak@needletailai.com" }
 ]
-license = { text = "TBD" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 keywords = ["agents", "murmur", "client"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -19,13 +20,14 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-# ``murmur-client`` reuses Murmur's frozen value types (``AgentResult``,
-# ``TaskSpec``, ``RunStatus``, ``MurmurError`` hierarchy) so error round-trip
-# is type-identical with the server. The full ``murmur-ai`` install pulls in
-# heavier deps (PydanticAI, FastStream); a future ``murmur-types`` extraction
-# could split the value layer out, but that's deferred — see the planning doc.
+# Lean by design. ``murmur-client`` deliberately does not depend on
+# ``murmur-ai`` — the server-side install pulls PydanticAI + FastStream +
+# structlog and a stack of broker drivers, none of which a thin HTTP
+# caller needs. Wire types (``TaskSpec``, ``AgentResult``, ``RunStatus``,
+# the ``MurmurError`` hierarchy) are defined locally in ``_wire.py``;
+# round-trip identity comes from matching the JSON shape, not from
+# sharing the Python class.
 dependencies = [
-    "murmur-ai==0.0.0",
     "httpx>=0.27.0,<1.0",
     "pydantic==2.13.3",
 ]

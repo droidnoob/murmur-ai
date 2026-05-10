@@ -22,12 +22,12 @@ import httpx
 import pydantic_ai
 import pytest
 from fastapi import FastAPI
-from murmur_client.local import LocalClient
 from pydantic import BaseModel
 from pydantic_ai.models.test import TestModel
 
 from murmur.agent import Agent
 from murmur.backends.async_backend import AsyncBackend
+from murmur.client import LocalClient
 from murmur.context.null import NullContextPasser
 from murmur.runtime import AgentRuntime
 from murmur.server.app import AgentServer

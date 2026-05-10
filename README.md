@@ -4,7 +4,7 @@
 
 # Murmur
 
-> **Agents that move as one.**
+> **Production runtime for multi-agent LLM systems.**
 
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/downloads/)
 [![pydantic-ai](https://img.shields.io/badge/pydantic--ai-1.87-purple)](https://ai.pydantic.dev/)
