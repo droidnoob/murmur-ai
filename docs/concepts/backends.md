@@ -117,5 +117,9 @@ operator's responsibility.
 
 - **`ProcessBackend`** — `ProcessPoolExecutor`. CPU isolation. Backlog;
   ship when a real workload requires it.
-- **`ContainerBackend`** — Docker SDK. Full isolation for untrusted
-  context. Queued for a future release.
+
+For untrusted-context concerns (sub-agents processing potentially
+hostile external data), the planned mitigation is per-tool sandboxing
+plus a `DenylistToolProvider` rather than per-agent container isolation
+— sandbox the *tool* (e.g. a code-interpreter tool wired to a hosted
+sandbox), not the whole agent loop.

@@ -40,9 +40,9 @@ Pydantic field types or in `isinstance()` checks — `EventEmitter` and
 ### `Backend`
 
 The unit of execution. Concretes:
-[`AsyncBackend`](../concepts/backends.md#asyncbackend),
-[`JobBackend`](../concepts/backends.md#jobbackend), and a future
-`ContainerBackend`. All pass the shared `BackendContract` test suite.
+[`AsyncBackend`](../concepts/backends.md#asyncbackend) and
+[`JobBackend`](../concepts/backends.md#jobbackend). Both pass the shared
+`BackendContract` test suite.
 
 ::: murmur.core.protocols.Backend
     options:

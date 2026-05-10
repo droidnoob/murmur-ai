@@ -275,8 +275,8 @@ independent top-level runs in the event stream.
 | `HIGH` | Full tool access | Code you wrote, executing in your trust boundary. |
 | `MEDIUM` | Curated set | Default for production agents. |
 | `LOW` | Read-only allowlist | Agents processing untrusted input. MCP requires explicit `allow=[...]`. |
-| `SANDBOX` | None | Pure reasoning; no I/O. A future release will pin SANDBOX agents to `ContainerBackend`. |
+| `SANDBOX` | None | Pure reasoning; no I/O. |
 
-The full enforcement matrix is queued. Today: MCP gating and tool
-allow-listing are enforced; backend choice and cascading-spawn cycle
-detection are not yet shipped.
+Today: MCP gating and tool allow-listing are enforced at the runtime;
+cascading-spawn controls (depth limit, total-spawn cap, signed task
+envelopes) are enforced at the executor.

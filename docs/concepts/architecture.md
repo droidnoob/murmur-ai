@@ -77,8 +77,7 @@ the **same shared contract suite** (e.g. `BackendContract`,
 
 ```
 AsyncBackend     ← asyncio.create_task — lightweight, default, zero-config
-JobBackend        ← FastStream subscriber/publisher (Kafka / NATS / RabbitMQ / Redis)
-ContainerBackend  ← Docker SDK — full isolation for untrusted context  (queued)
+JobBackend       ← FastStream subscriber/publisher (Kafka / NATS / RabbitMQ / Redis)
 ```
 
 `AsyncBackend` and `JobBackend` are both first-class. `JobBackend`
@@ -114,7 +113,8 @@ class TrustLevel(StrEnum):
     SANDBOX = "sandbox"  # no tools, pure reasoning
 ```
 
-Today the gate is enforced for native tools and MCP toolsets. The full
-enforcement matrix (`SANDBOX` agents always run via `ContainerBackend`
-regardless of caller's request, etc.) and cascading-spawn controls are
-queued for a future release.
+Today the gate is enforced for native tools and MCP toolsets.
+Cascading-spawn controls (depth limit, total-spawn cap, signed task
+envelopes) are also enforced; full untrusted-context sandboxing of
+tools (e.g. a code-interpreter tool wired to a hosted sandbox) is
+planned.

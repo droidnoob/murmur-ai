@@ -76,7 +76,6 @@ Backends shipped:
 ```
 AsyncBackend      asyncio  · default · zero-config
 JobBackend        FastStream — Kafka / NATS / RabbitMQ / Redis Streams
-ContainerBackend  Docker — full isolation for untrusted context  (Phase 4)
 ```
 
 Trust levels gate tool access: `HIGH` (full) · `MEDIUM` (curated) · `LOW` (read-only) · `SANDBOX` (none).
@@ -84,7 +83,7 @@ Trust levels gate tool access: `HIGH` (full) · `MEDIUM` (curated) · `LOW` (rea
 Context passers form a cost/quality ladder:
 
 ```
-Null → Full → Summary → Selective   (Summary / Selective ship in Phase 3)
+Null → Full → Summary → Selective   (Summary / Selective planned)
 ```
 
 ## Requirements
@@ -332,12 +331,6 @@ tests/
 PyPI distribution: `murmur-ai`. Import: `murmur` (`pip install murmur-ai` → `import murmur`).
 
 The dependency arrow points inward to `core/` and `types.py`. Only `murmur.interop` may import `pydantic_ai` or `faststream`.
-
-## Status
-
-Pre-alpha. The runtime is feature-complete on its public surface — Phase 1, 1.5, 1.6, and most of Phase 2 (events, cost tracking, distributed event bridge, MCP both sides, persistent run/event stores, standalone server, embedded mode, OTel metrics, dashboard MVP, abandoned-PEL recovery) all shipped. Phase 3 (smart context passers, group coordination tools, YAML workflow engine) and Phase 4 (Container isolation, full trust matrix, cascading-spawn controls) are scoped but deferred.
-
-Public API is stable on the surface that's shipped. Additive changes only until v0.1.
 
 ## Development
 

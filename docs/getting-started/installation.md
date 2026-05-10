@@ -74,12 +74,6 @@ pip install "murmur-ai[rocksdb]"         # high-throughput single-host
 All three implement the same `RunStore` Protocol and pass the same
 `RunStoreContract` test suite.
 
-## Container backend (preview)
-
-`murmur-ai[container]` will pull `docker==7.1.0` once `ContainerBackend`
-ships — full container isolation per agent run, queued for a future
-release.
-
 ## Development install
 
 ```bash
