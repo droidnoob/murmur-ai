@@ -112,7 +112,7 @@ Optional extras:
 | `murmur-ai[kafka]` | `faststream[kafka]` | Kafka broker |
 | `murmur-ai[nats]` | `faststream[nats]` | NATS broker |
 | `murmur-ai[rabbitmq]` | `faststream[rabbit]` | RabbitMQ broker |
-| `murmur-ai[all]` | All four brokers | Multi-broker fleet |
+| `murmur-ai[all-brokers]` | All four brokers | Multi-broker fleet |
 | `murmur-ai[server]` | `fastapi`, `uvicorn`, `sse-starlette` | `murmur serve` HTTP API |
 | `murmur-ai[otel]` | `opentelemetry-api`, `opentelemetry-sdk` | OTel metrics export |
 | `murmur-ai[mcp-server]` | `mcp` | Expose as an MCP server |
@@ -121,6 +121,7 @@ Optional extras:
 | `murmur-ai[rocksdb]` | `rocksdict` | High-throughput single-host store |
 | `murmur-ai[uvloop]` | `uvloop` | Faster async event loop (POSIX only) |
 | `murmur-ai[reload]` | `watchfiles` | `--reload` for serve / worker |
+| `murmur-ai[all]` | Every optional extra | Kitchen-sink install |
 
 ## Example
 

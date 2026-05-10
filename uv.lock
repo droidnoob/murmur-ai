@@ -2265,6 +2265,21 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "aiosqlite" },
+    { name = "docker" },
+    { name = "fastapi" },
+    { name = "faststream", extra = ["kafka", "nats", "rabbit", "redis"] },
+    { name = "mcp" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+    { name = "redis" },
+    { name = "rocksdict" },
+    { name = "sse-starlette" },
+    { name = "uvicorn" },
+    { name = "uvloop", marker = "sys_platform != 'win32'" },
+    { name = "watchfiles" },
+]
+all-brokers = [
     { name = "faststream", extra = ["kafka", "nats", "rabbit", "redis"] },
 ]
 container = [
@@ -2343,33 +2358,49 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiosqlite", marker = "extra == 'all'", specifier = ">=0.20,<1.0" },
     { name = "aiosqlite", marker = "extra == 'sqlite'", specifier = ">=0.20,<1.0" },
+    { name = "docker", marker = "extra == 'all'", specifier = "==7.1.0" },
     { name = "docker", marker = "extra == 'container'", specifier = "==7.1.0" },
+    { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.115.0,<1.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115.0,<1.0" },
     { name = "faststream", specifier = "==0.6.7" },
     { name = "faststream", extras = ["kafka"], marker = "extra == 'all'", specifier = "==0.6.7" },
+    { name = "faststream", extras = ["kafka"], marker = "extra == 'all-brokers'", specifier = "==0.6.7" },
     { name = "faststream", extras = ["kafka"], marker = "extra == 'kafka'", specifier = "==0.6.7" },
     { name = "faststream", extras = ["nats"], marker = "extra == 'all'", specifier = "==0.6.7" },
+    { name = "faststream", extras = ["nats"], marker = "extra == 'all-brokers'", specifier = "==0.6.7" },
     { name = "faststream", extras = ["nats"], marker = "extra == 'nats'", specifier = "==0.6.7" },
     { name = "faststream", extras = ["rabbit"], marker = "extra == 'all'", specifier = "==0.6.7" },
+    { name = "faststream", extras = ["rabbit"], marker = "extra == 'all-brokers'", specifier = "==0.6.7" },
     { name = "faststream", extras = ["rabbit"], marker = "extra == 'rabbitmq'", specifier = "==0.6.7" },
     { name = "faststream", extras = ["redis"], marker = "extra == 'all'", specifier = "==0.6.7" },
+    { name = "faststream", extras = ["redis"], marker = "extra == 'all-brokers'", specifier = "==0.6.7" },
     { name = "faststream", extras = ["redis"], marker = "extra == 'redis'", specifier = "==0.6.7" },
+    { name = "mcp", marker = "extra == 'all'", specifier = ">=1.27,<2.0" },
     { name = "mcp", marker = "extra == 'mcp-server'", specifier = ">=1.27,<2.0" },
+    { name = "opentelemetry-api", marker = "extra == 'all'", specifier = ">=1.39,<1.40" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.39,<1.40" },
+    { name = "opentelemetry-sdk", marker = "extra == 'all'", specifier = ">=1.39,<1.40" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.39,<1.40" },
     { name = "pydantic", specifier = "==2.13.3" },
     { name = "pydantic-ai", specifier = "==1.87.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "redis", marker = "extra == 'all'", specifier = ">=5" },
     { name = "redis", marker = "extra == 'redis-runstore'", specifier = ">=5" },
+    { name = "rocksdict", marker = "extra == 'all'", specifier = ">=0.3.29,<1.0" },
     { name = "rocksdict", marker = "extra == 'rocksdb'", specifier = ">=0.3.29,<1.0" },
+    { name = "sse-starlette", marker = "extra == 'all'", specifier = ">=2.1.3,<3.0" },
     { name = "sse-starlette", marker = "extra == 'server'", specifier = ">=2.1.3,<3.0" },
     { name = "structlog", specifier = "==25.5.0" },
+    { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.32.0,<1.0" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.32.0,<1.0" },
+    { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'all'", specifier = ">=0.21,<1.0" },
     { name = "uvloop", marker = "extra == 'uvloop'", specifier = ">=0.21,<1.0" },
+    { name = "watchfiles", marker = "extra == 'all'", specifier = ">=0.20,<2" },
     { name = "watchfiles", marker = "extra == 'reload'", specifier = ">=0.20,<2" },
 ]
-provides-extras = ["kafka", "nats", "rabbitmq", "redis", "all", "server", "sqlite", "rocksdb", "redis-runstore", "container", "reload", "mcp-server", "otel", "uvloop"]
+provides-extras = ["kafka", "nats", "rabbitmq", "redis", "all-brokers", "server", "sqlite", "rocksdb", "redis-runstore", "container", "reload", "mcp-server", "otel", "uvloop", "all"]
 
 [package.metadata.requires-dev]
 dev = [

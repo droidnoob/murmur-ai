@@ -43,7 +43,7 @@ When you're ready to distribute work across machines, add the matching extra:
 === "All four"
 
     ```bash
-    pip install "murmur-ai[all]"
+    pip install "murmur-ai[all-brokers]"
     ```
 
 The extra installs the matching `faststream` integration. Murmur's
