@@ -468,8 +468,13 @@ async def test_tampered_agent_name_rejected(
     await broker.publish(
         task_topic("other"), signed_for_echo.model_dump_json().encode()
     )
-    for _ in range(10):
-        await asyncio.sleep(0)
+    # Poll for the rejection-result to land. Pure ``sleep(0)`` cycles the
+    # loop without giving the broker handler real time, which races on
+    # py3.12's scheduler. Wait up to 1s in 50ms increments.
+    for _ in range(20):
+        if received:
+            break
+        await asyncio.sleep(0.05)
 
     try:
         assert len(received) == 1
