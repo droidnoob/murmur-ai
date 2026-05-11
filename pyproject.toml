@@ -188,7 +188,7 @@ dev = [
 # (``uv sync --group docs && uv run mkdocs serve``) or by the docs CI job.
 docs = [
     "mkdocs-material>=9.6,<10",
-    "mkdocstrings[python]>=0.27,<1",
+    "mkdocstrings[python]>=0.27,<2",
     "mkdocs-glightbox>=0.4,<1",
     "pymdown-extensions>=10.11,<11",
 ]
