@@ -51,7 +51,7 @@ all-brokers = [
 server = [
     "fastapi>=0.115.0,<1.0",
     "uvicorn>=0.32.0,<1.0",
-    "sse-starlette>=2.1.3,<3.0",
+    "sse-starlette>=2.1.3,<4.0",
 ]
 # Persistent RunStore concretes. Installed only when the
 # matching extra is requested; missing deps surface at first use, not on
@@ -107,7 +107,7 @@ all = [
     # server
     "fastapi>=0.115.0,<1.0",
     "uvicorn>=0.32.0,<1.0",
-    "sse-starlette>=2.1.3,<3.0",
+    "sse-starlette>=2.1.3,<4.0",
     # run stores
     "aiosqlite>=0.20,<1.0",
     "rocksdict>=0.3.29,<1.0",
@@ -146,7 +146,7 @@ dev = [
     # `httpx` ships with `fastapi`'s test client; pulled in for unit tests.
     "fastapi>=0.115.0,<1.0",
     "httpx>=0.27.0,<1.0",
-    "sse-starlette>=2.1.3,<3.0",
+    "sse-starlette>=2.1.3,<4.0",
     # All four broker extras pulled in so tests can use FastStream's
     # ``TestKafkaBroker`` / ``TestNatsBroker`` / ``TestRabbitBroker`` /
     # ``TestRedisBroker`` (in-memory, no Docker needed).
