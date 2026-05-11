@@ -1,10 +1,17 @@
 version: 2
 
+# Tuned to keep the weekly noise down. ``groups`` batch related deps
+# into one PR per ecosystem so a typical Monday is ~3 PRs total instead
+# of one-per-package. Security advisories are NOT affected by these
+# groups — Dependabot always opens an immediate, single-package PR for
+# anything in the GitHub Advisory Database, regardless of schedule.
+
 updates:
-  # Python deps in the root project (PydanticAI, FastStream, structlog,
-  # broker drivers, dev tooling). Weekly so the volume stays manageable;
-  # ``versioning-strategy: increase-if-necessary`` prefers the smallest
-  # bump that satisfies the existing constraint range.
+  # -----------------------------------------------------------------
+  # Python — root project (the runtime). Heavy graph: PydanticAI,
+  # FastStream + four broker drivers, structlog, the OTel SDK + API,
+  # dev tooling (ruff, ty, pytest, hypothesis, pre-commit).
+  # -----------------------------------------------------------------
   - package-ecosystem: pip
     directory: "/"
     schedule:
@@ -20,8 +27,65 @@ updates:
     labels:
       - dependencies
       - python
+    groups:
+      # Anything from the OTel namespace moves in lockstep — bumping
+      # the API without the SDK (or vice-versa) is a 50/50 chance of
+      # a runtime mismatch. One PR per OTel cycle.
+      opentelemetry:
+        patterns:
+          - "opentelemetry-*"
+      # Single-line patch / minor sweep for the rest of the dev tools.
+      # Majors are intentionally excluded so a surprise ruff / ty /
+      # pytest major lands as its own PR for explicit review.
+      dev-tools:
+        patterns:
+          - "ruff"
+          - "ty"
+          - "pytest*"
+          - "hypothesis"
+          - "pre-commit"
+          - "fakeredis*"
+          - "watchfiles"
+          - "aiosqlite"
+          - "rocksdict"
+        update-types:
+          - "minor"
+          - "patch"
+      # Production deps — group the non-major bumps too. Pydantic /
+      # PydanticAI / FastStream tend to bump on adjacent weeks; one
+      # batched PR is far easier to review than four.
+      production:
+        patterns:
+          - "pydantic"
+          - "pydantic-ai"
+          - "faststream*"
+          - "structlog"
+          - "httpx"
+          - "anyio"
+          - "redis"
+          - "nats-py"
+          - "aio-pika"
+          - "aiokafka"
+          - "aiormq"
+          - "mcp"
+        update-types:
+          - "minor"
+          - "patch"
+    # Things you'd rather opt into manually. PydanticAI majors in
+    # particular often carry breaking surface changes that need a
+    # plan, not a green CI.
+    ignore:
+      - dependency-name: "pydantic-ai"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "faststream"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pydantic"
+        update-types: ["version-update:semver-major"]
 
-  # Python deps inside the lean HTTP client.
+  # -----------------------------------------------------------------
+  # Python — lean HTTP client (``murmur-client``). Almost nothing
+  # here: httpx + pydantic.
+  # -----------------------------------------------------------------
   - package-ecosystem: pip
     directory: "/packages/murmur-client"
     schedule:
@@ -29,7 +93,7 @@ updates:
       day: monday
       time: "09:00"
       timezone: Asia/Kolkata
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 2
     commit-message:
       prefix: "deps(murmur-client)"
       include: scope
@@ -37,9 +101,22 @@ updates:
     labels:
       - dependencies
       - python
+    groups:
+      all:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Same rationale as the root — Pydantic majors get manual review.
+      - dependency-name: "pydantic"
+        update-types: ["version-update:semver-major"]
 
-  # JS deps for the TypeScript client. Mostly devDependencies (tsc,
-  # vitest, @types/*) so most updates are low-blast-radius patches.
+  # -----------------------------------------------------------------
+  # JS — TypeScript client (``@murmur/client``). Three devDeps:
+  # typescript, vitest, @types/node.
+  # -----------------------------------------------------------------
   - package-ecosystem: npm
     directory: "/packages/js-client"
     schedule:
@@ -47,16 +124,34 @@ updates:
       day: monday
       time: "09:00"
       timezone: Asia/Kolkata
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 2
     commit-message:
       prefix: "deps(js-client)"
       include: scope
     labels:
       - dependencies
       - javascript
+    groups:
+      all:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # @types/node ships rapid majors that mostly affect Node-API
+      # internals we don't touch. Pin the major manually when we want it.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # vitest 2 → 3 → 4 jumps have been API-churn-heavy. Manual upgrade.
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
 
-  # GitHub Actions versions. Keeps action pins ahead of the Node-20 →
-  # Node-24 deprecation curve and any security advisories.
+  # -----------------------------------------------------------------
+  # GitHub Actions versions. Cheap to update, valuable to stay current
+  # because the Node-20 → Node-24 deprecation curve will start
+  # red-flagging old action pins. Batch every action into one PR.
+  # -----------------------------------------------------------------
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -64,10 +159,14 @@ updates:
       day: monday
       time: "09:00"
       timezone: Asia/Kolkata
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     commit-message:
       prefix: "ci"
       include: scope
     labels:
       - dependencies
       - github-actions
+    groups:
+      actions:
+        patterns:
+          - "*"
