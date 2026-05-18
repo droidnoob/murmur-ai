@@ -22,8 +22,8 @@ classifiers = [
 
 # Core deps — ThreadBackend works out of the box, no broker required.
 dependencies = [
-    "pydantic==2.13.3",
-    "pydantic-ai==1.93.0",
+    "pydantic==2.13.4",
+    "pydantic-ai==1.97.0",
     "faststream==0.6.7",
     "structlog==25.5.0",
     "pyyaml>=6.0",
